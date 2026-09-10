@@ -1,0 +1,26 @@
+{
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    /*
+     * The workspace's base config is written for the *typecheck* pass: it is
+     * `composite` with `emitDeclarationOnly`, so `tsc --build` produces
+     * declarations and project-reference metadata and no JavaScript at all.
+     *
+     * That is why `pnpm build` used to fail here. The base is right for what
+     * it is for; this file is the other half — the one pass that actually
+     * emits something runnable — and it has to turn all three off, because
+     * `composite` implies `declaration` and `declaration` cannot be combined
+     * with `emitDeclarationOnly: false` while `noEmit` is on.
+     */
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "emitDeclarationOnly": false,
+    "noEmit": false,
+    "outDir": "./dist",
+    "rootDir": "./",
+    "tsBuildInfoFile": null
+  },
+  "include": ["src/**/*.ts", "libs/**/*.ts"],
+  "exclude": ["node_modules", "dist", "**/*.spec.ts", "**/*.test.ts"]
+}
