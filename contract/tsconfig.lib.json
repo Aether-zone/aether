@@ -1,0 +1,25 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "tsBuildInfoFile": "dist/tsconfig.lib.tsbuildinfo",
+    "types": ["node"],
+    /*
+     * This package is *built*, unlike akouo's contract, which points `main` at
+     * its TypeScript source and gets away with it because a webpack bundle
+     * compiles the source in. aether's api is compiled by `tsc` and not
+     * bundled, so at runtime it does a real `require('@aether/contract')` —
+     * and Node cannot load a `.ts` file. Hence real JavaScript in `dist`.
+     *
+     * That means turning off the three the workspace base sets for its
+     * typecheck pass, the same way `api/tsconfig.build.json` does.
+     */
+    "composite": false,
+    "emitDeclarationOnly": false,
+    "declaration": true,
+    "declarationMap": true
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["dist", "node_modules", "src/**/*.spec.ts", "src/**/*.test.ts"]
+}
