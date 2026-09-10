@@ -1,0 +1,19 @@
+packages:
+  - 'packages/*'
+  - 'api'
+  - 'api-e2e'
+  - 'web'
+  - 'web-e2e'
+  - 'contract'
+
+# pnpm 10 runs no dependency lifecycle scripts unless they are named here.
+# better-sqlite3 and bcrypt compile native bindings; without their scripts the
+# api boots to "No native build was found". The others place or fetch a
+# platform binary and are equally non-optional.
+onlyBuiltDependencies:
+  - '@swc/core'
+  - bcrypt
+  - better-sqlite3
+  - esbuild
+  - sharp
+  - unrs-resolver

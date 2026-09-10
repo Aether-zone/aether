@@ -1,0 +1,64 @@
+# See https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files for more about ignoring files.
+
+# compiled output
+dist
+tmp
+out-tsc
+
+# dependencies
+node_modules
+
+# IDEs and editors
+/.idea
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+
+# IDE - VSCode
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# misc
+/.sass-cache
+/connect.lock
+/coverage
+/libpeerconnection.log
+npm-debug.log
+yarn-error.log
+testem.log
+/typings
+
+# Local environment. `*.example` files are committed as documentation; the
+# real ones hold machine-specific ports and, in api/.env, a signing key.
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Local SQLite databases. TypeORM writes one to the working directory, which is
+# the api project root when it is started with `pnpm --filter @aether/api serve`.
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# System Files
+.DS_Store
+Thumbs.db
+
+.claude/worktrees
+.claude/settings.local.json
+
+# Next.js
+.next
+out
+
+test-output
+
+# Backups of a local env file carry the same secrets it does.
+.env.bak.*
