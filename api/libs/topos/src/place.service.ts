@@ -1,5 +1,7 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'node:crypto';
+import { Repository } from 'typeorm';
 
 import {
   AETHER_SOURCE,
@@ -19,17 +21,16 @@ import {
   type AetherEventType,
 } from '@aether-zone/organon';
 
+import { PlaceEntity } from './place.entity';
 import { placeIri, toPlaceDocument, type PlaceJsonLD } from './place.json-ld';
 
 /**
  * The places topos knows about.
  *
- * **In memory, deliberately and temporarily.** Everything is lost on restart
- * and nothing is shared between instances, so this is a placeholder for a
- * repository rather than a cache in front of one. It exists so the controller
- * and the console can be built against a real shape now; swapping it for a
- * persistent store should change nothing above this class, which is why the
- * methods take an `Actor` and return plain DTOs.
+ * **Backed by SQLite**, through the repository `ToposModule` asks for with
+ * `TypeOrmModule.forFeature`. It used to hold an array; nothing above this
+ * class changed when it stopped, which is what the `Actor`-in, DTO-out shape
+ * was for.
  *
  * **Scoped to an organization.** Every method takes the actor the route's
  * guard produced and can only see that organization's places, so there is no
@@ -44,23 +45,26 @@ import { placeIri, toPlaceDocument, type PlaceJsonLD } from './place.json-ld';
 export class PlaceService {
   private readonly logger = new Logger(PlaceService.name);
 
-  constructor(private readonly events: EventPublisher) {}
+  constructor(
+    @InjectRepository(PlaceEntity)
+    private readonly places: Repository<PlaceEntity>,
+    private readonly events: EventPublisher,
+  ) {}
 
   /**
-   * An array, which is what a placeholder wants: it reads as the list it is,
-   * and its order is the order things were added.
+   * Every place in this organization, oldest first.
    *
-   * The cost is that every lookup is a scan. That is irrelevant at this size
-   * and would be the wrong thing to optimise — the fix is a database, not a
-   * cleverer structure in front of one.
+   * Ordered by when the row was written, then by id to break a tie. A uuid
+   * primary key carries no order of its own, so without `recordedAt` the list
+   * would reshuffle between reads and an edit would move a row.
    */
-  private readonly places: StoredPlace[] = [];
+  async list(actor: Actor): Promise<PlaceDTO[]> {
+    const rows = await this.places.find({
+      where: { organizationId: actor.organizationId },
+      order: { recordedAt: 'ASC', id: 'ASC' },
+    });
 
-  /** Every place in this organization, oldest first. */
-  list(actor: Actor): PlaceDTO[] {
-    return this.places
-      .filter((place) => place.organizationId === actor.organizationId)
-      .map(toDto);
+    return rows.map(toDto);
   }
 
   /**
@@ -70,19 +74,21 @@ export class PlaceService {
    * exist. Telling the two apart would answer "does this id exist somewhere"
    * for anyone who cared to ask.
    */
-  get(actor: Actor, id: string): PlaceDTO {
-    return toDto(this.stored(actor, id));
+  async get(actor: Actor, id: string): Promise<PlaceDTO> {
+    return toDto(await this.stored(actor, id));
   }
 
   /** Records a new place. The id is generated here, never accepted. */
   async create(actor: Actor, input: CreatePlaceDTO): Promise<PlaceDTO> {
-    const place: StoredPlace = {
-      id: randomUUID(),
-      organizationId: actor.organizationId,
-      ...input,
-    };
-
-    this.places.push(place);
+    const place = await this.places.save(
+      this.places.create({
+        id: randomUUID(),
+        organizationId: actor.organizationId,
+        ...input,
+        description: input.description ?? null,
+        recordedAt: new Date().toISOString(),
+      }),
+    );
 
     await this.announce(PLACE_CREATED, 'aether:ResourceCreated', place, actor);
 
@@ -155,10 +161,8 @@ export class PlaceService {
     id: string,
     changes: UpdatePlaceDTO,
   ): Promise<PlaceDTO> {
-    const existing = this.stored(actor, id);
-    const updated: StoredPlace = { ...existing, ...changes };
-
-    this.places[this.places.indexOf(existing)] = updated;
+    const existing = await this.stored(actor, id);
+    const updated = await this.places.save({ ...existing, ...changes });
 
     /*
      * The whole document, not the changed fields. An Aether event describes
@@ -166,7 +170,12 @@ export class PlaceService {
      * one hearing about this place for the first time still ends up with
      * everything.
      */
-    await this.announce(PLACE_UPDATED, 'aether:ResourceUpdated', updated, actor);
+    await this.announce(
+      PLACE_UPDATED,
+      'aether:ResourceUpdated',
+      updated,
+      actor,
+    );
 
     return toDto(updated);
   }
@@ -175,20 +184,25 @@ export class PlaceService {
   async remove(actor: Actor, id: string): Promise<void> {
     // `stored` for the side effect of throwing: deleting nothing and reporting
     // success would hide a caller working from a stale list.
-    const place = this.stored(actor, id);
+    const place = await this.stored(actor, id);
 
-    this.places.splice(this.places.indexOf(place), 1);
+    await this.places.remove({ ...place });
 
     await this.announce(PLACE_DELETED, 'aether:ResourceDeleted', place, actor);
   }
 
   /** The stored record, including the tenant the DTO does not carry. */
-  private stored(actor: Actor, id: string): StoredPlace {
-    const place = this.places.find(
-      (candidate) =>
-        candidate.id === id &&
-        candidate.organizationId === actor.organizationId,
-    );
+  private async stored(actor: Actor, id: string): Promise<PlaceEntity> {
+    /*
+     * The tenant is part of the lookup, not a check after it. A `findOneBy`
+     * on the id alone followed by an `if` would be one forgotten `if` away
+     * from reading across the boundary; asked this way the query cannot
+     * return another organization's row at all.
+     */
+    const place = await this.places.findOneBy({
+      id,
+      organizationId: actor.organizationId,
+    });
 
     if (!place) {
       throw new NotFoundException(`No place with id ${id}.`);
@@ -206,9 +220,20 @@ export class PlaceService {
  * restate what the caller already said — and a client that read it from the
  * body might start sending it *as* the body.
  */
-type StoredPlace = PlaceDTO & { organizationId: string };
+type StoredPlace = PlaceEntity;
 
-const toDto = ({
-  organizationId: _organizationId,
-  ...place
-}: StoredPlace): PlaceDTO => place;
+/**
+ * A row as the api answers with it.
+ *
+ * The tenant is dropped, and `null` becomes absent. Those are the two places
+ * a store and a DTO always disagree: SQL has no "not stated", and the contract
+ * has no `null`.
+ */
+const toDto = (place: PlaceEntity): PlaceDTO => ({
+  id: place.id,
+  name: place.name,
+  ...(place.description === null ? {} : { description: place.description }),
+  address: place.address,
+  lat: place.lat,
+  lng: place.lng,
+});

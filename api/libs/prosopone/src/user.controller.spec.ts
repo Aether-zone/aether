@@ -8,6 +8,7 @@ import { Global, INestApplication, Module } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 
+import { testDatabaseModule } from '../../test-database';
 import { ProsoponeModule } from './prosopone.module';
 
 /**
@@ -85,7 +86,7 @@ beforeEach(async () => {
   published.length = 0;
 
   const module = await Test.createTestingModule({
-    imports: [TestBrokerModule, ProsoponeModule],
+    imports: [testDatabaseModule(), TestBrokerModule, ProsoponeModule],
   })
     .overrideGuard(OrganizationGuard)
     .useValue({

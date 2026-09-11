@@ -1,4 +1,7 @@
 import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+
+import { PlaceEntity } from './place.entity';
 
 import { PlaceController } from './place.controller';
 import { PlaceService } from './place.service';
@@ -17,6 +20,7 @@ import { PlaceService } from './place.service';
  * back out through HTTP: chronos will want somewhere for a meeting to be.
  */
 @Module({
+  imports: [TypeOrmModule.forFeature([PlaceEntity])],
   controllers: [PlaceController],
   providers: [PlaceService],
   exports: [PlaceService],

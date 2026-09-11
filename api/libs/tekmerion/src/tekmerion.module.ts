@@ -1,4 +1,10 @@
 import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+
+import { ResourceEntity } from './resource.entity';
+
+import { ResourceController } from './resource.controller';
+import { ResourceService } from './resource.service';
 
 /**
  * Tekmerion — evidence: the things a claim rests on.
@@ -7,8 +13,17 @@ import { Module } from '@nestjs/common';
  * business and what it *says* is mneme’s; this is where it came from and
  * what it is.
  *
- * Empty for now: this is the seam, not the implementation. Controllers,
- * services and entities go here as each screen stops being a placeholder.
+ * `Resource` is the only thing here, and it is held in memory like the rest
+ * of aether's placeholder services — a worse fit here than elsewhere, since a
+ * resource can carry a whole transcript. `ResourceService` is exported for
+ * the domains that will want to reach one without going back out through
+ * HTTP: mneme indexes what a resource says, arachni relates it to everything
+ * else.
  */
-@Module({})
+@Module({
+  imports: [TypeOrmModule.forFeature([ResourceEntity])],
+  controllers: [ResourceController],
+  providers: [ResourceService],
+  exports: [ResourceService],
+})
 export class TekmerionModule {}

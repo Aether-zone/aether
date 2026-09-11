@@ -5,13 +5,12 @@
  * business and what it *says* is mneme’s; this is where it came from and
  * what it is.
  *
- * A list of names rather than entities: the console's screens for these are
- * placeholders that call no api, so the one thing actually settled is *which
- * resources this domain owns*. Writing down a schema before there is a screen
- * that needs it would be inventing the domain rather than recording it.
+ * A list of names, kept as the one place that says what this domain owns.
+ * `Resource` now has a schema in the contract and a service behind it; the
+ * list stays because "which resources are tekmerion's" is a different
+ * question from "which of them are built", and it is the one an event
+ * consumer or a permissions check needs answered.
  */
-export const TEKMERION_RESOURCES = [
-  'Resource',
-] as const;
+export const TEKMERION_RESOURCES = ['Resource'] as const;
 
 export type TekmerionResource = (typeof TEKMERION_RESOURCES)[number];

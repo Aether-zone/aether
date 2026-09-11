@@ -1,12 +1,14 @@
 import {
   ACTOR_KEY,
+  EventPublisher,
   OrganizationGuard,
   type Actor,
 } from '@aether-zone/organon';
-import { INestApplication } from '@nestjs/common';
+import { Global, INestApplication, Module } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 
+import { testDatabaseModule } from '../../test-database';
 import { TelosModule } from './telos.module';
 
 /**
@@ -17,7 +19,22 @@ import { TelosModule } from './telos.module';
  * `OrganizationGuard` is overridden — it narrows a `Principal` the global
  * token guard would have put on the request, and there is no token here. The
  * stand-in leaves the `Actor` where the real one does.
+ *
+ * `EventPublisher` comes from organon's `@Global` RabbitMQ module, which is
+ * not in this graph either, so it is supplied the same way — a global module
+ * rather than `overrideProvider`, which can only replace a provider the graph
+ * already has.
  */
+
+@Global()
+@Module({
+  providers: [
+    { provide: EventPublisher, useValue: { publish: () => Promise.resolve() } },
+  ],
+  exports: [EventPublisher],
+})
+class TestBrokerModule {}
+
 const ORGANIZATION = '22222222-2222-4222-8222-222222222222';
 const CALLER = '33333333-3333-4333-8333-333333333333';
 
@@ -36,7 +53,9 @@ const BASE = `/organizations/${ORGANIZATION}/ideas`;
 let app: INestApplication;
 
 beforeEach(async () => {
-  const module = await Test.createTestingModule({ imports: [TelosModule] })
+  const module = await Test.createTestingModule({
+    imports: [testDatabaseModule(), TestBrokerModule, TelosModule],
+  })
     .overrideGuard(OrganizationGuard)
     .useValue({
       canActivate: (context: any) => {

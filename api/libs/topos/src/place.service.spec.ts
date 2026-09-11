@@ -1,10 +1,8 @@
 import { NotFoundException } from '@nestjs/common';
-import {
-  aetherEventSchema,
-  EventPublisher,
-  type Actor,
-} from '@aether-zone/organon';
+import { aetherEventSchema, type Actor } from '@aether-zone/organon';
 
+import { TestDatabase } from '../../test-database';
+import { PlaceEntity } from './place.entity';
 import { PlaceService } from './place.service';
 
 /** A publisher that records instead of connecting. */
@@ -19,6 +17,7 @@ class RecordingPublisher {
 }
 
 let publisher: RecordingPublisher;
+let database: TestDatabase;
 
 const actorIn = (organizationId: string): Actor =>
   ({
@@ -51,9 +50,10 @@ const depot = {
 
 let places: PlaceService;
 
-beforeEach(() => {
+beforeEach(async () => {
+  database = await TestDatabase.open(PlaceEntity);
   publisher = new RecordingPublisher();
-  places = new PlaceService(publisher as unknown as EventPublisher);
+  places = new PlaceService(database.repository(PlaceEntity), publisher as any);
 });
 
 describe('creating', () => {
@@ -69,7 +69,9 @@ describe('creating', () => {
   it('keeps the organization out of the body', async () => {
     // It is in the URL of every route that can reach the record, so returning
     // it would restate what the caller already said.
-    expect(await places.create(lokal, sieraad)).not.toHaveProperty('organizationId');
+    expect(await places.create(lokal, sieraad)).not.toHaveProperty(
+      'organizationId',
+    );
   });
 
   it('allows two places with the same name', async () => {
@@ -80,7 +82,7 @@ describe('creating', () => {
     await expect(
       places.create(lokal, { ...depot, name: sieraad.name }),
     ).resolves.toBeDefined();
-    expect(places.list(lokal)).toHaveLength(2);
+    expect(await places.list(lokal)).toHaveLength(2);
   });
 
   it('keeps a place without a description', async () => {
@@ -98,8 +100,12 @@ describe('tenant isolation', () => {
     await places.create(lokal, sieraad);
     await places.create(other, depot);
 
-    expect(places.list(lokal).map((p) => p.name)).toEqual(['Het Sieraad']);
-    expect(places.list(other).map((p) => p.name)).toEqual(['Het Depot']);
+    expect((await places.list(lokal)).map((p) => p.name)).toEqual([
+      'Het Sieraad',
+    ]);
+    expect((await places.list(other)).map((p) => p.name)).toEqual([
+      'Het Depot',
+    ]);
   });
 
   it('answers 404 for someone else’s place', async () => {
@@ -107,7 +113,9 @@ describe('tenant isolation', () => {
     // "does this id exist somewhere" for anyone who cared to ask.
     const created = await places.create(lokal, sieraad);
 
-    expect(() => places.get(other, created.id)).toThrow(NotFoundException);
+    await expect(places.get(other, created.id)).rejects.toThrow(
+      NotFoundException,
+    );
   });
 
   it('refuses to update or delete across the boundary', async () => {
@@ -121,23 +129,30 @@ describe('tenant isolation', () => {
     );
 
     // Still there, and unchanged.
-    expect(places.get(lokal, created.id)).toEqual(created);
+    expect(await places.get(lokal, created.id)).toEqual(created);
   });
 });
 
 describe('reading', () => {
   it('lists in the order places were added', async () => {
+    // The clock is advanced so the two rows do not share a millisecond; see
+    // the note on `recordedAt` for why that matters.
+    jest.useFakeTimers().setSystemTime(new Date('2026-01-01T09:00:00.000Z'));
+
     await places.create(lokal, sieraad);
+
+    jest.advanceTimersByTime(1000);
+
     await places.create(lokal, depot);
 
-    expect(places.list(lokal).map((p) => p.name)).toEqual([
+    expect((await places.list(lokal)).map((p) => p.name)).toEqual([
       'Het Sieraad',
       'Het Depot',
     ]);
   });
 
   it('is empty before anything is added', async () => {
-    expect(places.list(lokal)).toEqual([]);
+    expect(await places.list(lokal)).toEqual([]);
   });
 });
 
@@ -150,14 +165,27 @@ describe('updating', () => {
   });
 
   it('does not move the place in the list', async () => {
-    // An edit is not a reordering; a list that reshuffled on every save would
-    // make the console jump under the reader.
+    /*
+     * An edit is not a reordering; a list that reshuffled on every save would
+     * make the console jump under the reader.
+     *
+     * The clock is advanced between the two creates because the order key is a
+     * millisecond timestamp, and two rows written in the same millisecond tie
+     * — broken by id, so the order is stable but arbitrary between them. What
+     * this test is about is that *updating* does not change it, and that has
+     * to be asserted against a known order rather than a coin toss.
+     */
+    jest.useFakeTimers().setSystemTime(new Date('2026-01-01T09:00:00.000Z'));
+
     await places.create(lokal, sieraad);
+
+    jest.advanceTimersByTime(1000);
+
     const second = await places.create(lokal, depot);
 
     await places.update(lokal, second.id, { name: 'Renamed' });
 
-    expect(places.list(lokal).map((p) => p.name)).toEqual([
+    expect((await places.list(lokal)).map((p) => p.name)).toEqual([
       'Het Sieraad',
       'Renamed',
     ]);
@@ -185,7 +213,9 @@ describe('removing', () => {
 
     await places.remove(lokal, first.id);
 
-    expect(places.list(lokal).map((p) => p.name)).toEqual(['Het Depot']);
+    expect((await places.list(lokal)).map((p) => p.name)).toEqual([
+      'Het Depot',
+    ]);
   });
 
   it('answers 404 rather than shrugging at an id it does not hold', async () => {
@@ -274,7 +304,7 @@ describe('the events a place announces', () => {
     publisher.publish = () => Promise.reject(new Error('broker unreachable'));
 
     await expect(places.create(lokal, sieraad)).resolves.toMatchObject(sieraad);
-    expect(places.list(lokal)).toHaveLength(1);
+    expect(await places.list(lokal)).toHaveLength(1);
   });
 
   it('publishes only events organon’s schema accepts', async () => {
@@ -288,4 +318,11 @@ describe('the events a place announces', () => {
       expect(aetherEventSchema.safeParse(event).success).toBe(true);
     }
   });
+});
+
+afterEach(async () => {
+  // Two tests install a fake clock; leaving one in place would make whichever
+  // spec ran next depend on the order jest happened to choose.
+  jest.useRealTimers();
+  await database.close();
 });

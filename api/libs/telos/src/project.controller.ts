@@ -25,7 +25,8 @@ import {
   type UpdateProjectDTO,
 } from '@aether/contract';
 
-import { ProjectService } from './project.service';
+import { ProjectService, type ProjectRecord } from './project.service';
+import { TaskService } from './task.service';
 
 /**
  * The projects telos is holding.
@@ -40,11 +41,39 @@ import { ProjectService } from './project.service';
 @Controller('organizations/:organizationId/projects')
 @UseGuards(OrganizationGuard)
 export class ProjectController {
-  constructor(private readonly projects: ProjectService) {}
+  constructor(
+    private readonly projects: ProjectService,
+    private readonly tasks: TaskService,
+  ) {}
+
+  /**
+   * Counts the work in a project.
+   *
+   * Composed here rather than in `ProjectService` because only `TaskService`
+   * knows, and having the two ask each other would make them mutually
+   * dependent — `TaskService` already depends on `ProjectService` to refuse a
+   * task filed under a project that does not exist, so the arrow can only go
+   * one way. The controller is the one place that knows about both.
+   */
+  private async withTasks(
+    actor: Actor,
+    project: ProjectRecord,
+  ): Promise<ProjectDTO> {
+    return {
+      ...project,
+      tasks: await this.tasks.countsForProject(actor, project.id),
+    };
+  }
 
   @Get()
-  list(@CurrentActor() actor: Actor): ProjectDTO[] {
-    return this.projects.list(actor);
+  async list(@CurrentActor() actor: Actor): Promise<ProjectDTO[]> {
+    // `Promise.all` over the page: each count is its own pair of queries, and
+    // awaiting them in turn would make a list N round trips deep.
+    return Promise.all(
+      (await this.projects.list(actor)).map((project) =>
+        this.withTasks(actor, project),
+      ),
+    );
   }
 
   /**
@@ -53,19 +82,21 @@ export class ProjectController {
    * have been one.
    */
   @Get(':id')
-  get(
+  async get(
     @CurrentActor() actor: Actor,
     @Param('id', ParseUUIDPipe) id: string,
-  ): ProjectDTO {
-    return this.projects.get(actor, id);
+  ): Promise<ProjectDTO> {
+    return this.withTasks(actor, await this.projects.get(actor, id));
   }
 
   @Post()
-  create(
+  async create(
     @CurrentActor() actor: Actor,
     @Body(new ZodValidationPipe(createProjectSchema)) project: CreateProjectDTO,
-  ): ProjectDTO {
-    return this.projects.create(actor, project);
+  ): Promise<ProjectDTO> {
+    // Newly started, so it has no tasks yet — counted the same way rather than
+    // hard-coded, so there is one path and not two.
+    return this.withTasks(actor, await this.projects.create(actor, project));
   }
 
   /**
@@ -74,12 +105,15 @@ export class ProjectController {
    * silently clears anything the caller forgot to send.
    */
   @Patch(':id')
-  update(
+  async update(
     @CurrentActor() actor: Actor,
     @Param('id', ParseUUIDPipe) id: string,
     @Body(new ZodValidationPipe(updateProjectSchema)) changes: UpdateProjectDTO,
-  ): ProjectDTO {
-    return this.projects.update(actor, id, changes);
+  ): Promise<ProjectDTO> {
+    return this.withTasks(
+      actor,
+      await this.projects.update(actor, id, changes),
+    );
   }
 
   /** 204: there is nothing useful to say about a project that is now gone. */
@@ -88,7 +122,7 @@ export class ProjectController {
   remove(
     @CurrentActor() actor: Actor,
     @Param('id', ParseUUIDPipe) id: string,
-  ): void {
-    this.projects.remove(actor, id);
+  ): Promise<void> {
+    return this.projects.remove(actor, id);
   }
 }

@@ -8,6 +8,7 @@ import { Global, INestApplication, Module } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 
+import { testDatabaseModule } from '../../test-database';
 import { ToposModule } from './topos.module';
 
 /**
@@ -28,7 +29,9 @@ import { ToposModule } from './topos.module';
 
 @Global()
 @Module({
-  providers: [{ provide: EventPublisher, useValue: { publish: () => Promise.resolve() } }],
+  providers: [
+    { provide: EventPublisher, useValue: { publish: () => Promise.resolve() } },
+  ],
   exports: [EventPublisher],
 })
 class TestBrokerModule {}
@@ -57,7 +60,7 @@ let app: INestApplication;
 
 beforeEach(async () => {
   const module = await Test.createTestingModule({
-    imports: [TestBrokerModule, ToposModule],
+    imports: [testDatabaseModule(), TestBrokerModule, ToposModule],
   })
     .overrideGuard(OrganizationGuard)
     .useValue({

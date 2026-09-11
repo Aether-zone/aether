@@ -1,10 +1,8 @@
-import {
-  aetherEventSchema,
-  EventPublisher,
-  type Actor,
-} from '@aether-zone/organon';
+import { aetherEventSchema, type Actor } from '@aether-zone/organon';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 
+import { TestDatabase } from '../../test-database';
+import { UserEntity } from './user.entity';
 import { UserService } from './user.service';
 
 /**
@@ -53,11 +51,13 @@ const grace = {
 };
 
 let publisher: RecordingPublisher;
+let database: TestDatabase;
 let users: UserService;
 
-beforeEach(() => {
+beforeEach(async () => {
+  database = await TestDatabase.open(UserEntity);
   publisher = new RecordingPublisher();
-  users = new UserService(publisher as unknown as EventPublisher);
+  users = new UserService(database.repository(UserEntity), publisher as any);
 });
 
 describe('creating', () => {
@@ -101,8 +101,10 @@ describe('tenant isolation', () => {
     await users.create(lokal, ada);
     await users.create(other, grace);
 
-    expect(users.list(lokal).map((u) => u.firstName)).toEqual(['Ada']);
-    expect(users.list(other).map((u) => u.firstName)).toEqual(['Grace']);
+    expect((await users.list(lokal)).map((u) => u.firstName)).toEqual(['Ada']);
+    expect((await users.list(other)).map((u) => u.firstName)).toEqual([
+      'Grace',
+    ]);
   });
 
   it('answers 404 for someone else’s person', async () => {
@@ -110,7 +112,9 @@ describe('tenant isolation', () => {
     // "does this id exist somewhere" for anyone who cared to ask.
     const created = await users.create(lokal, ada);
 
-    expect(() => users.get(other, created.id)).toThrow(NotFoundException);
+    await expect(users.get(other, created.id)).rejects.toThrow(
+      NotFoundException,
+    );
   });
 
   it('refuses to update or delete across the boundary', async () => {
@@ -124,7 +128,7 @@ describe('tenant isolation', () => {
     );
 
     // Still there, and unchanged.
-    expect(users.get(lokal, created.id)).toEqual(created);
+    expect(await users.get(lokal, created.id)).toEqual(created);
   });
 });
 
@@ -162,7 +166,7 @@ describe('removing', () => {
 
     await users.remove(lokal, created.id);
 
-    expect(users.list(lokal)).toEqual([]);
+    expect(await users.list(lokal)).toEqual([]);
     await expect(users.create(lokal, ada)).resolves.toBeDefined();
   });
 
@@ -222,7 +226,7 @@ describe('the event a create announces', () => {
     publisher.publish = () => Promise.reject(new Error('broker unreachable'));
 
     await expect(users.create(lokal, ada)).resolves.toMatchObject(ada);
-    expect(users.list(lokal)).toHaveLength(1);
+    expect(await users.list(lokal)).toHaveLength(1);
   });
 });
 
@@ -295,21 +299,32 @@ describe('the events an update and a delete announce', () => {
     publisher.publish = () => Promise.reject(new Error('broker unreachable'));
 
     await expect(users.remove(lokal, created.id)).resolves.toBeUndefined();
-    expect(users.list(lokal)).toEqual([]);
+    expect(await users.list(lokal)).toEqual([]);
   });
 });
 
 describe('every event satisfies organon’s schema', () => {
   it.each([
-    ['created', async () => { await users.create(lokal, ada); }],
-    ['updated', async () => {
-      const u = await users.create(lokal, ada);
-      await users.update(lokal, u.id, { lastName: 'Byron' });
-    }],
-    ['deleted', async () => {
-      const u = await users.create(lokal, ada);
-      await users.remove(lokal, u.id);
-    }],
+    [
+      'created',
+      async () => {
+        await users.create(lokal, ada);
+      },
+    ],
+    [
+      'updated',
+      async () => {
+        const u = await users.create(lokal, ada);
+        await users.update(lokal, u.id, { lastName: 'Byron' });
+      },
+    ],
+    [
+      'deleted',
+      async () => {
+        const u = await users.create(lokal, ada);
+        await users.remove(lokal, u.id);
+      },
+    ],
   ])('%s', async (_name, act) => {
     // The schema is what every consumer parses with; an event that fails it is
     // one arachni, mneme and akouo all drop, silently and identically.
@@ -322,3 +337,5 @@ describe('every event satisfies organon’s schema', () => {
     }
   });
 });
+
+afterEach(() => database.close());

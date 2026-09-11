@@ -1,6 +1,9 @@
 import { NotFoundException } from '@nestjs/common';
-import type { Actor } from '@aether-zone/organon';
+import { aetherEventSchema, type Actor } from '@aether-zone/organon';
 
+import { TestDatabase } from '../../test-database';
+import { ProjectEntity } from './project.entity';
+import { TaskEntity } from './task.entity';
 import { ProjectService } from './project.service';
 import { TaskService } from './task.service';
 
@@ -18,104 +21,150 @@ const actorIn = (organizationId: string): Actor =>
 const lokal = actorIn('org-1');
 const other = actorIn('org-2');
 
+/** A publisher that records instead of connecting. */
+class RecordingPublisher {
+  readonly published: { routingKey: string; event: any }[] = [];
+
+  publish(routingKey: string, event: unknown) {
+    this.published.push({ routingKey, event });
+
+    return Promise.resolve();
+  }
+}
+
+let publisher: RecordingPublisher;
+let database: TestDatabase;
+
 let tasks: TaskService;
 let projects: ProjectService;
 
-beforeEach(() => {
-  projects = new ProjectService();
-  tasks = new TaskService(projects);
+beforeEach(async () => {
+  database = await TestDatabase.open(ProjectEntity, TaskEntity);
+  publisher = new RecordingPublisher();
+  projects = new ProjectService(
+    database.repository(ProjectEntity),
+    publisher as any,
+  );
+  tasks = new TaskService(
+    database.repository(TaskEntity),
+    projects,
+    publisher as any,
+  );
 });
 
 describe('writing one down', () => {
-  it('needs only a title', () => {
-    const task = tasks.create(lokal, { title: 'Do the thing' });
+  it('needs only a title', async () => {
+    const task = await tasks.create(lokal, { title: 'Do the thing' });
 
     expect(task.title).toBe('Do the thing');
     expect(task.projectId).toBeUndefined();
     expect(task.dueAt).toBeUndefined();
   });
 
-  it('starts every task TODO', () => {
+  it('starts every task TODO', async () => {
     // Writing a task down is not doing it.
-    expect(tasks.create(lokal, { title: 'Do the thing' }).status).toBe('TODO');
+    expect((await tasks.create(lokal, { title: 'Do the thing' })).status).toBe(
+      'TODO',
+    );
   });
 
-  it('is not closed to begin with', () => {
-    expect(tasks.create(lokal, { title: 'Do the thing' }).closedAt).toBeUndefined();
+  it('is not closed to begin with', async () => {
+    expect(
+      (await tasks.create(lokal, { title: 'Do the thing' })).closedAt,
+    ).toBeUndefined();
   });
 
-  it('gives each one an id of its own', () => {
-    const first = tasks.create(lokal, { title: 'First' });
-    const second = tasks.create(lokal, { title: 'Second' });
+  it('gives each one an id of its own', async () => {
+    const first = await tasks.create(lokal, { title: 'First' });
+    const second = await tasks.create(lokal, { title: 'Second' });
 
     expect(first.id).not.toBe(second.id);
   });
 });
 
 describe('belonging to a project', () => {
-  const project = () => projects.create(lokal, { title: 'Rebuild the console' });
+  const project = () =>
+    projects.create(lokal, {
+      title: 'Rebuild the console',
+      pursues: [],
+      involves: [],
+    });
 
-  it('files the task under it', () => {
-    const { id } = project();
+  it('files the task under it', async () => {
+    const { id } = await project();
 
-    expect(tasks.create(lokal, { title: 'Do the thing', projectId: id }).projectId)
-      .toBe(id);
+    expect(
+      (await tasks.create(lokal, { title: 'Do the thing', projectId: id }))
+        .projectId,
+    ).toBe(id);
   });
 
-  it('refuses a project nobody holds', () => {
+  it('refuses a project nobody holds', async () => {
     // Checked rather than stored blindly: an id pointing at nothing shows up
     // as a task filed under a project that cannot be opened.
-    expect(() =>
+    await expect(
       tasks.create(lokal, {
         title: 'Do the thing',
         projectId: '11111111-1111-4111-8111-111111111111',
       }),
-    ).toThrow(NotFoundException);
+    ).rejects.toThrow(NotFoundException);
   });
 
-  it('refuses a project belonging to another organization', () => {
-    const theirs = projects.create(other, { title: 'Their work' });
+  it('refuses a project belonging to another organization', async () => {
+    const theirs = await projects.create(other, {
+      title: 'Their work',
+      pursues: [],
+      involves: [],
+    });
 
-    expect(() =>
+    await expect(
       tasks.create(lokal, { title: 'Do the thing', projectId: theirs.id }),
-    ).toThrow(NotFoundException);
+    ).rejects.toThrow(NotFoundException);
   });
 
-  it('can be adopted by a project later', () => {
+  it('can be adopted by a project later', async () => {
     /*
      * The reason `projectId` is optional. A task gets written down when it
      * occurs to someone, which is usually before anyone has decided which
      * piece of work it belongs to.
      */
-    const loose = tasks.create(lokal, { title: 'Do the thing' });
-    const { id } = project();
-
-    expect(tasks.update(lokal, loose.id, { projectId: id }).projectId).toBe(id);
-  });
-
-  it('can be taken out of one again', () => {
-    const { id } = project();
-    const task = tasks.create(lokal, { title: 'Do the thing', projectId: id });
+    const loose = await tasks.create(lokal, { title: 'Do the thing' });
+    const { id } = await project();
 
     expect(
-      tasks.update(lokal, task.id, { projectId: null }).projectId,
+      (await tasks.update(lokal, loose.id, { projectId: id })).projectId,
+    ).toBe(id);
+  });
+
+  it('can be taken out of one again', async () => {
+    const { id } = await project();
+    const task = await tasks.create(lokal, {
+      title: 'Do the thing',
+      projectId: id,
+    });
+
+    expect(
+      (await tasks.update(lokal, task.id, { projectId: null })).projectId,
     ).toBeUndefined();
   });
 
-  it('names the tasks a project has', () => {
-    const { id } = project();
-    const first = tasks.create(lokal, { title: 'First', projectId: id });
-    tasks.create(lokal, { title: 'Loose' });
-    const second = tasks.create(lokal, { title: 'Second', projectId: id });
+  it('names the tasks a project has', async () => {
+    const { id } = await project();
+    const first = await tasks.create(lokal, { title: 'First', projectId: id });
+    await tasks.create(lokal, { title: 'Loose' });
+    const second = await tasks.create(lokal, {
+      title: 'Second',
+      projectId: id,
+    });
 
-    expect(tasks.idsInProject(lokal, id)).toEqual([first.id, second.id]);
+    expect(await tasks.idsInProject(lokal, id)).toEqual([first.id, second.id]);
   });
 
-  it('does not reach across organizations when it does', () => {
-    const { id } = project();
-    tasks.create(lokal, { title: 'Ours', projectId: id });
+  it('does not reach across organizations when it does', async () => {
+    const { id } = await project();
+    await tasks.create(lokal, { title: 'Ours', projectId: id });
 
-    expect(tasks.idsInProject(other, id)).toEqual([]);
+    expect(await tasks.idsInProject(other, id)).toEqual([]);
   });
 });
 
@@ -134,64 +183,66 @@ describe('finishing one', () => {
     jest.useRealTimers();
   });
 
-  it('records when it closed', () => {
-    const task = tasks.create(lokal, { title: 'Do the thing' });
+  it('records when it closed', async () => {
+    const task = await tasks.create(lokal, { title: 'Do the thing' });
 
-    const done = tasks.update(lokal, task.id, { status: 'DONE' });
+    const done = await tasks.update(lokal, task.id, { status: 'DONE' });
 
     expect(done.closedAt).toBeDefined();
   });
 
-  it('counts calling it off as closing it too', () => {
-    const task = tasks.create(lokal, { title: 'Do the thing' });
+  it('counts calling it off as closing it too', async () => {
+    const task = await tasks.create(lokal, { title: 'Do the thing' });
 
     expect(
-      tasks.update(lokal, task.id, { status: 'CANCELLED' }).closedAt,
+      (await tasks.update(lokal, task.id, { status: 'CANCELLED' })).closedAt,
     ).toBeDefined();
   });
 
-  it('leaves a blocked task open', () => {
+  it('leaves a blocked task open', async () => {
     // Blocked is a task that has not happened, not one that will not.
-    const task = tasks.create(lokal, { title: 'Do the thing' });
+    const task = await tasks.create(lokal, { title: 'Do the thing' });
 
     expect(
-      tasks.update(lokal, task.id, { status: 'BLOCKED' }).closedAt,
+      (await tasks.update(lokal, task.id, { status: 'BLOCKED' })).closedAt,
     ).toBeUndefined();
   });
 
-  it('does not move the closing time when the task is edited afterwards', () => {
+  it('does not move the closing time when the task is edited afterwards', async () => {
     /*
      * The whole reason `closedAt` is stored rather than read from
      * `updatedAt`: renaming a finished task is not finishing it again.
      */
-    const task = tasks.create(lokal, { title: 'Do the thing' });
-    const { closedAt } = tasks.update(lokal, task.id, { status: 'DONE' });
+    const task = await tasks.create(lokal, { title: 'Do the thing' });
+    const { closedAt } = await tasks.update(lokal, task.id, { status: 'DONE' });
 
     jest.advanceTimersByTime(60_000);
 
-    const renamed = tasks.update(lokal, task.id, { title: 'Do the thing well' });
+    const renamed = await tasks.update(lokal, task.id, {
+      title: 'Do the thing well',
+    });
 
     expect(renamed.closedAt).toBe(closedAt);
     expect(renamed.updatedAt).not.toBe(closedAt);
   });
 
-  it('clears the closing time when a task reopens', () => {
-    const task = tasks.create(lokal, { title: 'Do the thing' });
-    tasks.update(lokal, task.id, { status: 'DONE' });
+  it('clears the closing time when a task reopens', async () => {
+    const task = await tasks.create(lokal, { title: 'Do the thing' });
+    await tasks.update(lokal, task.id, { status: 'DONE' });
 
     expect(
-      tasks.update(lokal, task.id, { status: 'IN_PROGRESS' }).closedAt,
+      (await tasks.update(lokal, task.id, { status: 'IN_PROGRESS' })).closedAt,
     ).toBeUndefined();
   });
 
-  it('sets a fresh closing time if it is finished again', () => {
-    const task = tasks.create(lokal, { title: 'Do the thing' });
-    const first = tasks.update(lokal, task.id, { status: 'DONE' });
-    tasks.update(lokal, task.id, { status: 'TODO' });
+  it('sets a fresh closing time if it is finished again', async () => {
+    const task = await tasks.create(lokal, { title: 'Do the thing' });
+    const first = await tasks.update(lokal, task.id, { status: 'DONE' });
+    await tasks.update(lokal, task.id, { status: 'TODO' });
 
     jest.advanceTimersByTime(60_000);
 
-    const second = tasks.update(lokal, task.id, { status: 'DONE' });
+    const second = await tasks.update(lokal, task.id, { status: 'DONE' });
 
     expect(second.closedAt).toBeDefined();
     expect(second.closedAt).not.toBe(first.closedAt);
@@ -199,15 +250,17 @@ describe('finishing one', () => {
 });
 
 describe('changing one', () => {
-  it('leaves the fields a change does not mention alone', () => {
-    const task = tasks.create(lokal, {
+  it('leaves the fields a change does not mention alone', async () => {
+    const task = await tasks.create(lokal, {
       title: 'Do the thing',
       description: 'And do it well',
       priority: 2,
       dueAt: '2026-03-31T22:59:00.000Z',
     });
 
-    const updated = tasks.update(lokal, task.id, { status: 'IN_PROGRESS' });
+    const updated = await tasks.update(lokal, task.id, {
+      status: 'IN_PROGRESS',
+    });
 
     expect(updated).toMatchObject({
       description: 'And do it well',
@@ -216,14 +269,14 @@ describe('changing one', () => {
     });
   });
 
-  it('removes a value given null, rather than blanking it', () => {
-    const task = tasks.create(lokal, {
+  it('removes a value given null, rather than blanking it', async () => {
+    const task = await tasks.create(lokal, {
       title: 'Do the thing',
       priority: 2,
       dueAt: '2026-03-31T22:59:00.000Z',
     });
 
-    const updated = tasks.update(lokal, task.id, {
+    const updated = await tasks.update(lokal, task.id, {
       priority: null,
       dueAt: null,
     });
@@ -232,52 +285,154 @@ describe('changing one', () => {
     expect(updated.dueAt).toBeUndefined();
   });
 
-  it('answers 404 rather than shrugging at an id it does not hold', () => {
-    expect(() =>
+  it('answers 404 rather than shrugging at an id it does not hold', async () => {
+    await expect(
       tasks.update(lokal, '11111111-1111-4111-8111-111111111111', {
         status: 'DONE',
       }),
-    ).toThrow(NotFoundException);
+    ).rejects.toThrow(NotFoundException);
   });
 });
 
 describe('who can see what', () => {
-  it('shows an organization only its own tasks', () => {
-    tasks.create(lokal, { title: 'Ours' });
-    tasks.create(other, { title: 'Theirs' });
+  it('shows an organization only its own tasks', async () => {
+    await tasks.create(lokal, { title: 'Ours' });
+    await tasks.create(other, { title: 'Theirs' });
 
-    expect(tasks.list(lokal).map((task) => task.title)).toEqual(['Ours']);
-    expect(tasks.list(other).map((task) => task.title)).toEqual(['Theirs']);
+    expect((await tasks.list(lokal)).map((task) => task.title)).toEqual([
+      'Ours',
+    ]);
+    expect((await tasks.list(other)).map((task) => task.title)).toEqual([
+      'Theirs',
+    ]);
   });
 
-  it('gives the same 404 for another organization’s task as for no task', () => {
+  it('gives the same 404 for another organization’s task as for no task', async () => {
     // Telling the two apart would answer "does this id exist somewhere".
-    const theirs = tasks.create(other, { title: 'Theirs' });
+    const theirs = await tasks.create(other, { title: 'Theirs' });
 
-    expect(() => tasks.get(lokal, theirs.id)).toThrow(NotFoundException);
+    await expect(tasks.get(lokal, theirs.id)).rejects.toThrow(
+      NotFoundException,
+    );
   });
 
-  it('keeps the tenant out of what it returns', () => {
+  it('keeps the tenant out of what it returns', async () => {
     // It is in the URL of every route that can reach the record.
-    expect(tasks.create(lokal, { title: 'Ours' })).not.toHaveProperty(
+    expect(await tasks.create(lokal, { title: 'Ours' })).not.toHaveProperty(
       'organizationId',
     );
   });
 });
 
 describe('removing', () => {
-  it('forgets it and leaves the rest alone', () => {
-    const first = tasks.create(lokal, { title: 'First' });
-    tasks.create(lokal, { title: 'Second' });
+  it('forgets it and leaves the rest alone', async () => {
+    const first = await tasks.create(lokal, { title: 'First' });
+    await tasks.create(lokal, { title: 'Second' });
 
-    tasks.remove(lokal, first.id);
+    await tasks.remove(lokal, first.id);
 
-    expect(tasks.list(lokal).map((task) => task.title)).toEqual(['Second']);
+    expect((await tasks.list(lokal)).map((task) => task.title)).toEqual([
+      'Second',
+    ]);
   });
 
-  it('answers 404 rather than shrugging at an id it does not hold', () => {
-    expect(() =>
+  it('answers 404 rather than shrugging at an id it does not hold', async () => {
+    await expect(
       tasks.remove(lokal, '11111111-1111-4111-8111-111111111111'),
-    ).toThrow(NotFoundException);
+    ).rejects.toThrow(NotFoundException);
   });
 });
+
+describe('announcing', () => {
+  const keyed = (key: string) =>
+    publisher.published.filter((p) => p.routingKey === key);
+
+  it('publishes a created task under the created key', async () => {
+    const task = await tasks.create(lokal, { title: 'Do the thing' });
+
+    const [{ event }] = keyed('task.created');
+
+    expect(event).toMatchObject({
+      type: 'aether:ResourceCreated',
+      subject: `urn:aether:task:${task.id}`,
+      organizationId: 'org-1',
+    });
+    expect(event.data).toMatchObject({
+      '@type': 'aether:Task',
+      title: 'Do the thing',
+      status: 'TODO',
+    });
+  });
+
+  it('points at its project as a reference', async () => {
+    /*
+     * A reference and not a nested project: the project is the thing the task
+     * belongs to, not a part of it, and the arrow has to point somewhere a
+     * consumer can follow without inferring ownership.
+     */
+    const { id } = await projects.create(lokal, {
+      title: 'Rebuild the console',
+      pursues: [],
+      involves: [],
+    });
+    await tasks.create(lokal, { title: 'Do the thing', projectId: id });
+
+    expect(keyed('task.created')[0].event.data.project).toEqual({
+      '@id': `urn:aether:project:${id}`,
+    });
+  });
+
+  it('says nothing about a project when the task stands alone', async () => {
+    await tasks.create(lokal, { title: 'Do the thing' });
+
+    expect(keyed('task.created')[0].event.data).not.toHaveProperty('project');
+  });
+
+  it('carries the closing time once the task is finished', async () => {
+    const task = await tasks.create(lokal, { title: 'Do the thing' });
+    await tasks.update(lokal, task.id, { status: 'DONE' });
+
+    const { data } = keyed('task.updated')[0].event;
+
+    expect(data.status).toBe('DONE');
+    expect(data.closedAt).toBeDefined();
+  });
+
+  it('publishes a delete with no data', async () => {
+    const task = await tasks.create(lokal, { title: 'Do the thing' });
+    await tasks.remove(lokal, task.id);
+
+    expect(keyed('task.deleted')[0].event).not.toHaveProperty('data');
+  });
+
+  it('says nothing when the task was refused', async () => {
+    await expect(
+      tasks.create(lokal, {
+        title: 'Do the thing',
+        projectId: '11111111-1111-4111-8111-111111111111',
+      }),
+    ).rejects.toThrow(NotFoundException);
+
+    expect(keyed('task.created')).toHaveLength(0);
+  });
+
+  it('publishes events organon will accept', async () => {
+    const { id } = await projects.create(lokal, {
+      title: 'Rebuild the console',
+      pursues: [],
+      involves: [],
+    });
+    const task = await tasks.create(lokal, {
+      title: 'Do the thing',
+      projectId: id,
+    });
+    await tasks.update(lokal, task.id, { status: 'DONE' });
+    await tasks.remove(lokal, task.id);
+
+    for (const { event } of publisher.published) {
+      expect(aetherEventSchema.safeParse(event).success).toBe(true);
+    }
+  });
+});
+
+afterEach(() => database.close());

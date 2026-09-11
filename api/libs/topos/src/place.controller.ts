@@ -48,7 +48,7 @@ export class PlaceController {
   constructor(private readonly places: PlaceService) {}
 
   @Get()
-  list(@CurrentActor() actor: Actor): PlaceDTO[] {
+  async list(@CurrentActor() actor: Actor): Promise<PlaceDTO[]> {
     return this.places.list(actor);
   }
 
@@ -58,10 +58,10 @@ export class PlaceController {
    * have been one.
    */
   @Get(':id')
-  get(
+  async get(
     @CurrentActor() actor: Actor,
     @Param('id', ParseUUIDPipe) id: string,
-  ): PlaceDTO {
+  ): Promise<PlaceDTO> {
     return this.places.get(actor, id);
   }
 

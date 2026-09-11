@@ -10,11 +10,6 @@
  * from "which of them are built", and it is the one an event consumer or a
  * permissions check needs answered.
  */
-export const TELOS_RESOURCES = [
-  'Idea',
-  'Goal',
-  'Project',
-  'Task',
-] as const;
+export const TELOS_RESOURCES = ['Idea', 'Goal', 'Project', 'Task'] as const;
 
 export type TelosResource = (typeof TELOS_RESOURCES)[number];

@@ -25,7 +25,8 @@ import {
   type UpdateGoalDTO,
 } from '@aether/contract';
 
-import { GoalService } from './goal.service';
+import { GoalService, type GoalRecord } from './goal.service';
+import { ProjectService } from './project.service';
 
 /**
  * The goals telos is holding.
@@ -40,11 +41,38 @@ import { GoalService } from './goal.service';
 @Controller('organizations/:organizationId/goals')
 @UseGuards(OrganizationGuard)
 export class GoalController {
-  constructor(private readonly goals: GoalService) {}
+  constructor(
+    private readonly goals: GoalService,
+    private readonly projects: ProjectService,
+  ) {}
+
+  /**
+   * Fills in `realizedBy` — the projects working towards this goal.
+   *
+   * Composed here rather than in `GoalService` because only `ProjectService`
+   * knows the answer, and having the two services ask each other would make
+   * them mutually dependent for one derived field. The controller is the one
+   * place that already knows about both.
+   */
+  private async withRealizedBy(
+    actor: Actor,
+    goal: GoalRecord,
+  ): Promise<GoalDTO> {
+    return {
+      ...goal,
+      realizedBy: await this.projects.idsPursuing(actor, goal.id),
+    };
+  }
 
   @Get()
-  list(@CurrentActor() actor: Actor): GoalDTO[] {
-    return this.goals.list(actor);
+  async list(@CurrentActor() actor: Actor): Promise<GoalDTO[]> {
+    // `Promise.all` over the page: each composition is its own read, and
+    // awaiting them in turn would make a list N round trips deep.
+    return Promise.all(
+      (await this.goals.list(actor)).map((goal) =>
+        this.withRealizedBy(actor, goal),
+      ),
+    );
   }
 
   /**
@@ -53,19 +81,21 @@ export class GoalController {
    * have been one.
    */
   @Get(':id')
-  get(
+  async get(
     @CurrentActor() actor: Actor,
     @Param('id', ParseUUIDPipe) id: string,
-  ): GoalDTO {
-    return this.goals.get(actor, id);
+  ): Promise<GoalDTO> {
+    return this.withRealizedBy(actor, await this.goals.get(actor, id));
   }
 
   @Post()
-  create(
+  async create(
     @CurrentActor() actor: Actor,
     @Body(new ZodValidationPipe(createGoalSchema)) goal: CreateGoalDTO,
-  ): GoalDTO {
-    return this.goals.create(actor, goal);
+  ): Promise<GoalDTO> {
+    // Newly set, so nothing can be working towards it yet — composed the same
+    // way rather than hard-coded to `[]`, so there is one path and not two.
+    return this.withRealizedBy(actor, await this.goals.create(actor, goal));
   }
 
   /**
@@ -74,12 +104,15 @@ export class GoalController {
    * silently clears anything the caller forgot to send.
    */
   @Patch(':id')
-  update(
+  async update(
     @CurrentActor() actor: Actor,
     @Param('id', ParseUUIDPipe) id: string,
     @Body(new ZodValidationPipe(updateGoalSchema)) changes: UpdateGoalDTO,
-  ): GoalDTO {
-    return this.goals.update(actor, id, changes);
+  ): Promise<GoalDTO> {
+    return this.withRealizedBy(
+      actor,
+      await this.goals.update(actor, id, changes),
+    );
   }
 
   /** 204: there is nothing useful to say about a goal that is now gone. */
@@ -88,7 +121,7 @@ export class GoalController {
   remove(
     @CurrentActor() actor: Actor,
     @Param('id', ParseUUIDPipe) id: string,
-  ): void {
-    this.goals.remove(actor, id);
+  ): Promise<void> {
+    return this.goals.remove(actor, id);
   }
 }

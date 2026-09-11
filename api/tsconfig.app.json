@@ -17,6 +17,12 @@
       "@aether/chronos/*": [
         "./libs/chronos/src/*"
       ],
+      "@aether/events": [
+        "./libs/events/src"
+      ],
+      "@aether/events/*": [
+        "./libs/events/src/*"
+      ],
       "@aether/oikonomos": [
         "./libs/oikonomos/src"
       ],

@@ -1,7 +1,10 @@
 import type { CreateGoalDTO } from '@aether/contract';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import type { Actor } from '@aether-zone/organon';
+import { aetherEventSchema, type Actor } from '@aether-zone/organon';
 
+import { TestDatabase } from '../../test-database';
+import { GoalEntity } from './goal.entity';
+import { IdeaEntity } from './idea.entity';
 import { GoalService } from './goal.service';
 import { IdeaService } from './idea.service';
 
@@ -25,6 +28,20 @@ const ship = {
   targetAt: '2026-03-31T23:59:00.000Z',
 };
 
+/** A publisher that records instead of connecting. */
+class RecordingPublisher {
+  readonly published: { routingKey: string; event: any }[] = [];
+
+  publish(routingKey: string, event: unknown) {
+    this.published.push({ routingKey, event });
+
+    return Promise.resolve();
+  }
+}
+
+let publisher: RecordingPublisher;
+let database: TestDatabase;
+
 let goals: GoalService;
 let ideas: IdeaService;
 
@@ -37,85 +54,105 @@ let ideas: IdeaService;
  * service the way anything real does, without restating it thirteen times.
  */
 const set = (actor: Actor, input: Partial<CreateGoalDTO> & { title: string }) =>
-  goals.create(actor, { inspiredBy: [], ...input });
+  goals.create(actor, {
+    inspiredBy: [],
+    involves: [],
+    sources: [],
+    scheduled: [],
+    ...input,
+  });
 
-beforeEach(() => {
-  ideas = new IdeaService();
-  goals = new GoalService(ideas);
+beforeEach(async () => {
+  database = await TestDatabase.open(GoalEntity, IdeaEntity);
+  publisher = new RecordingPublisher();
+  ideas = new IdeaService(database.repository(IdeaEntity), publisher as any);
+  goals = new GoalService(
+    database.repository(GoalEntity),
+    ideas,
+    publisher as any,
+  );
 });
 
 describe('setting one', () => {
-  it('needs only a title', () => {
-    const created = set(lokal, { title: 'Ship it' });
+  it('needs only a title', async () => {
+    const created = await set(lokal, { title: 'Ship it' });
 
     expect(created.title).toBe('Ship it');
     expect(created.startsAt).toBeUndefined();
     expect(created.targetAt).toBeUndefined();
   });
 
-  it('starts every goal ACTIVE', () => {
+  it('starts every goal ACTIVE', async () => {
     // Setting one you have already abandoned is not a thing anyone does.
-    expect(set(lokal, ship).status).toBe('ACTIVE');
+    expect((await set(lokal, ship)).status).toBe('ACTIVE');
   });
 
-  it('stamps both timestamps the same on the way in', () => {
-    const created = set(lokal, ship);
+  it('stamps both timestamps the same on the way in', async () => {
+    const created = await set(lokal, ship);
 
     expect(created.createdAt).toBe(created.updatedAt);
   });
 
-  it('keeps the organization out of the body', () => {
-    expect(set(lokal, ship)).not.toHaveProperty('organizationId');
+  it('keeps the organization out of the body', async () => {
+    expect(await set(lokal, ship)).not.toHaveProperty('organizationId');
   });
 });
 
 describe('tenant isolation', () => {
-  it('lists only this organization’s goals', () => {
-    set(lokal, ship);
-    set(other, { title: 'Somebody else’s' });
+  it('lists only this organization’s goals', async () => {
+    await set(lokal, ship);
+    await set(other, { title: 'Somebody else’s' });
 
-    expect(goals.list(lokal).map((g) => g.title)).toEqual(['Ship the console']);
-    expect(goals.list(other).map((g) => g.title)).toEqual(['Somebody else’s']);
+    expect((await goals.list(lokal)).map((g) => g.title)).toEqual([
+      'Ship the console',
+    ]);
+    expect((await goals.list(other)).map((g) => g.title)).toEqual([
+      'Somebody else’s',
+    ]);
   });
 
-  it('answers 404 for someone else’s goal', () => {
-    const created = set(lokal, ship);
+  it('answers 404 for someone else’s goal', async () => {
+    const created = await set(lokal, ship);
 
-    expect(() => goals.get(other, created.id)).toThrow(NotFoundException);
-  });
-
-  it('refuses to update or delete across the boundary', () => {
-    const created = set(lokal, ship);
-
-    expect(() => goals.update(other, created.id, { title: 'X' })).toThrow(
+    await expect(goals.get(other, created.id)).rejects.toThrow(
       NotFoundException,
     );
-    expect(() => goals.remove(other, created.id)).toThrow(NotFoundException);
-    expect(goals.get(lokal, created.id)).toEqual(created);
+  });
+
+  it('refuses to update or delete across the boundary', async () => {
+    const created = await set(lokal, ship);
+
+    await expect(
+      goals.update(other, created.id, { title: 'X' }),
+    ).rejects.toThrow(NotFoundException);
+    await expect(goals.remove(other, created.id)).rejects.toThrow(
+      NotFoundException,
+    );
+    expect(await goals.get(lokal, created.id)).toEqual(created);
   });
 });
 
 describe('the dates, on update', () => {
-  it('compares them after merging, not before', () => {
+  it('compares them after merging, not before', async () => {
     /*
      * The schema cannot do this: a partial update may carry one date and not
      * the other, and the second is known only once merged with what is stored.
      */
-    const created = set(lokal, ship);
+    const created = await set(lokal, ship);
 
-    expect(() =>
+    await expect(
       goals.update(lokal, created.id, {
         targetAt: '2025-01-01T00:00:00.000Z',
       }),
-    ).toThrow(BadRequestException);
+    ).rejects.toThrow(BadRequestException);
   });
 
-  it('allows a change that is only invalid against the old value', () => {
+  it('allows a change that is only invalid against the old value', async () => {
     // Moving both at once must work: checking the new target against the old
     // start would reject a perfectly good reschedule.
-    const created = set(lokal, ship);
+    const created = await set(lokal, ship);
 
-    const moved = goals.update(lokal, created.id, {
+    const moved = await goals.update(lokal, created.id, {
       startsAt: '2025-06-01T09:00:00.000Z',
       targetAt: '2025-09-01T09:00:00.000Z',
     });
@@ -123,170 +160,331 @@ describe('the dates, on update', () => {
     expect(moved.targetAt).toBe('2025-09-01T09:00:00.000Z');
   });
 
-  it('removes a deadline when it is cleared', () => {
+  it('removes a deadline when it is cleared', async () => {
     // "This no longer has a deadline" is a real thing to say.
-    const created = set(lokal, ship);
-
-    expect(goals.update(lokal, created.id, { targetAt: null }).targetAt).toBeUndefined();
-  });
-
-  it('leaves a date alone when it is absent', () => {
-    const created = set(lokal, ship);
-
-    expect(goals.update(lokal, created.id, { title: 'Renamed' }).targetAt).toBe(
-      ship.targetAt,
-    );
-  });
-
-  it('accepts a target once the start is gone', () => {
-    // With no start there is nothing to be earlier than.
-    const created = set(lokal, ship);
-
-    goals.update(lokal, created.id, { startsAt: null });
+    const created = await set(lokal, ship);
 
     expect(
-      goals.update(lokal, created.id, {
-        targetAt: '2020-01-01T00:00:00.000Z',
-      }).targetAt,
+      (await goals.update(lokal, created.id, { targetAt: null })).targetAt,
+    ).toBeUndefined();
+  });
+
+  it('leaves a date alone when it is absent', async () => {
+    const created = await set(lokal, ship);
+
+    expect(
+      (await goals.update(lokal, created.id, { title: 'Renamed' })).targetAt,
+    ).toBe(ship.targetAt);
+  });
+
+  it('accepts a target once the start is gone', async () => {
+    // With no start there is nothing to be earlier than.
+    const created = await set(lokal, ship);
+
+    await goals.update(lokal, created.id, { startsAt: null });
+
+    expect(
+      (
+        await goals.update(lokal, created.id, {
+          targetAt: '2020-01-01T00:00:00.000Z',
+        })
+      ).targetAt,
     ).toBe('2020-01-01T00:00:00.000Z');
   });
 });
 
 describe('changing one', () => {
-  it('moves updatedAt without touching createdAt', () => {
-    const created = set(lokal, ship);
-    const updated = goals.update(lokal, created.id, { status: 'COMPLETED' });
+  it('moves updatedAt without touching createdAt', async () => {
+    const created = await set(lokal, ship);
+    const updated = await goals.update(lokal, created.id, {
+      status: 'COMPLETED',
+    });
 
     expect(updated.createdAt).toBe(created.createdAt);
     expect(updated.status).toBe('COMPLETED');
   });
 
-  it('does not move the goal in the list', () => {
-    set(lokal, { title: 'First' });
-    const second = set(lokal, { title: 'Second' });
+  it('does not move the goal in the list', async () => {
+    await set(lokal, { title: 'First' });
+    const second = await set(lokal, { title: 'Second' });
 
-    goals.update(lokal, second.id, { title: 'Renamed' });
+    await goals.update(lokal, second.id, { title: 'Renamed' });
 
-    expect(goals.list(lokal).map((g) => g.title)).toEqual(['First', 'Renamed']);
+    expect((await goals.list(lokal)).map((g) => g.title)).toEqual([
+      'First',
+      'Renamed',
+    ]);
   });
 
-  it('answers 404 for an id it does not hold', () => {
-    expect(() =>
+  it('answers 404 for an id it does not hold', async () => {
+    await expect(
       goals.update(lokal, '11111111-1111-4111-8111-111111111111', {}),
-    ).toThrow(NotFoundException);
+    ).rejects.toThrow(NotFoundException);
   });
 });
 
 describe('removing', () => {
-  it('forgets it and leaves the rest alone', () => {
-    const first = set(lokal, { title: 'First' });
-    set(lokal, { title: 'Second' });
+  it('forgets it and leaves the rest alone', async () => {
+    const first = await set(lokal, { title: 'First' });
+    await set(lokal, { title: 'Second' });
 
-    goals.remove(lokal, first.id);
+    await goals.remove(lokal, first.id);
 
-    expect(goals.list(lokal).map((g) => g.title)).toEqual(['Second']);
+    expect((await goals.list(lokal)).map((g) => g.title)).toEqual(['Second']);
   });
 
-  it('answers 404 rather than shrugging at an id it does not hold', () => {
-    expect(() =>
+  it('answers 404 rather than shrugging at an id it does not hold', async () => {
+    await expect(
       goals.remove(lokal, '11111111-1111-4111-8111-111111111111'),
-    ).toThrow(NotFoundException);
+    ).rejects.toThrow(NotFoundException);
   });
 });
 
+/** An idea for a goal to have come from. */
+const capture = (actor: Actor, title: string) =>
+  ideas.create(actor, { title, involves: [] });
+
 describe('what inspired a goal', () => {
-  const capture = (actor: Actor, title: string) =>
-    ideas.create(actor, { title });
+  it('records the ideas it came from', async () => {
+    const idea = await capture(lokal, 'A thought');
 
-  it('records the ideas it came from', () => {
-    const idea = capture(lokal, 'A thought');
-
-    expect(set(lokal, { title: 'Ship it', inspiredBy: [idea.id] }).inspiredBy)
-      .toEqual([idea.id]);
+    expect(
+      (await set(lokal, { title: 'Ship it', inspiredBy: [idea.id] }))
+        .inspiredBy,
+    ).toEqual([idea.id]);
   });
 
-  it('refuses an idea nobody holds', () => {
+  it('refuses an idea nobody holds', async () => {
     // Checked rather than stored blindly: an id that resolves to nothing would
     // read as a broken link on the idea's page, with no way to tell whether
     // the idea was deleted or never existed.
-    expect(() =>
+    await expect(
       set(lokal, {
         title: 'Ship it',
         inspiredBy: ['11111111-1111-4111-8111-111111111111'],
       }),
-    ).toThrow(NotFoundException);
+    ).rejects.toThrow(NotFoundException);
   });
 
-  it('refuses an idea belonging to another organization', () => {
-    const theirs = capture(other, 'Their thought');
+  it('refuses an idea belonging to another organization', async () => {
+    const theirs = await capture(other, 'Their thought');
 
     // `IdeaService.get` is scoped to the actor, so this is a 404 and not a
     // 403 — naming it would confirm the id exists somewhere.
-    expect(() =>
+    await expect(
       set(lokal, { title: 'Ship it', inspiredBy: [theirs.id] }),
-    ).toThrow(NotFoundException);
+    ).rejects.toThrow(NotFoundException);
   });
 
-  it('can be changed later, as a whole set', () => {
-    const first = capture(lokal, 'First');
-    const second = capture(lokal, 'Second');
-    const goal = set(lokal, { title: 'Ship it', inspiredBy: [first.id] });
+  it('can be changed later, as a whole set', async () => {
+    const first = await capture(lokal, 'First');
+    const second = await capture(lokal, 'Second');
+    const goal = await set(lokal, { title: 'Ship it', inspiredBy: [first.id] });
 
-    const updated = goals.update(lokal, goal.id, {
+    const updated = await goals.update(lokal, goal.id, {
       inspiredBy: [first.id, second.id],
     });
 
     expect(updated.inspiredBy).toEqual([first.id, second.id]);
   });
 
-  it('checks the ideas on the way in when changed', () => {
-    const goal = set(lokal, { title: 'Ship it' });
+  it('checks the ideas on the way in when changed', async () => {
+    const goal = await set(lokal, { title: 'Ship it' });
 
-    expect(() =>
+    await expect(
       goals.update(lokal, goal.id, {
         inspiredBy: ['11111111-1111-4111-8111-111111111111'],
       }),
-    ).toThrow(NotFoundException);
+    ).rejects.toThrow(NotFoundException);
   });
 
-  it('can be emptied', () => {
+  it('can be emptied', async () => {
     // `[]` is a real value here, not an absent one — the distinction the
     // update shape has to keep, since a missing key means "leave it alone".
-    const idea = capture(lokal, 'A thought');
-    const goal = set(lokal, { title: 'Ship it', inspiredBy: [idea.id] });
+    const idea = await capture(lokal, 'A thought');
+    const goal = await set(lokal, { title: 'Ship it', inspiredBy: [idea.id] });
 
-    expect(goals.update(lokal, goal.id, { inspiredBy: [] }).inspiredBy).toEqual(
-      [],
-    );
+    expect(
+      (await goals.update(lokal, goal.id, { inspiredBy: [] })).inspiredBy,
+    ).toEqual([]);
   });
 });
 
 describe('reading the link backwards', () => {
-  it('names the goals an idea led to', () => {
-    const idea = ideas.create(lokal, { title: 'A thought' });
-    const first = set(lokal, { title: 'First', inspiredBy: [idea.id] });
-    set(lokal, { title: 'Unrelated' });
-    const second = set(lokal, { title: 'Second', inspiredBy: [idea.id] });
+  it('names the goals an idea led to', async () => {
+    const idea = await capture(lokal, 'A thought');
+    const first = await set(lokal, { title: 'First', inspiredBy: [idea.id] });
+    await set(lokal, { title: 'Unrelated' });
+    const second = await set(lokal, { title: 'Second', inspiredBy: [idea.id] });
 
-    expect(goals.idsInspiredBy(lokal, idea.id)).toEqual([first.id, second.id]);
+    expect(await goals.idsInspiredBy(lokal, idea.id)).toEqual([
+      first.id,
+      second.id,
+    ]);
   });
 
-  it('is empty for an idea nothing came of', () => {
-    const idea = ideas.create(lokal, { title: 'A thought' });
+  it('is empty for an idea nothing came of', async () => {
+    const idea = await capture(lokal, 'A thought');
 
-    expect(goals.idsInspiredBy(lokal, idea.id)).toEqual([]);
+    expect(await goals.idsInspiredBy(lokal, idea.id)).toEqual([]);
   });
 
-  it('does not reach across organizations', () => {
+  it('does not reach across organizations', async () => {
     /*
      * The ids are uuids, so another tenant cannot guess one — but this is the
      * read that composes `Idea.inspired`, and a tenant scope that held
      * everywhere except the derived field would be a hole shaped exactly like
      * the thing nobody thinks to test.
      */
-    const idea = ideas.create(lokal, { title: 'A thought' });
-    set(lokal, { title: 'Ours', inspiredBy: [idea.id] });
+    const idea = await capture(lokal, 'A thought');
+    await set(lokal, { title: 'Ours', inspiredBy: [idea.id] });
 
-    expect(goals.idsInspiredBy(other, idea.id)).toEqual([]);
+    expect(await goals.idsInspiredBy(other, idea.id)).toEqual([]);
   });
 });
+
+describe('announcing', () => {
+  const keyed = (key: string) =>
+    publisher.published.filter((p) => p.routingKey === key);
+
+  it('publishes a created goal under the created key', async () => {
+    const goal = await set(lokal, { title: 'Ship it' });
+
+    const [{ event }] = keyed('goal.created');
+
+    expect(event).toMatchObject({
+      type: 'aether:ResourceCreated',
+      subject: `urn:aether:goal:${goal.id}`,
+      organizationId: 'org-1',
+    });
+    expect(event.data).toMatchObject({
+      '@type': 'aether:Goal',
+      title: 'Ship it',
+      status: 'ACTIVE',
+    });
+  });
+
+  it('names the ideas it came from as references, not nested ideas', async () => {
+    /*
+     * An idea outlives the goal it inspired. Nesting it would tell a consumer
+     * it is *part of* the goal, which is what decides whether it gets deleted
+     * along with it.
+     */
+    const idea = await capture(lokal, 'A thought');
+    await set(lokal, { title: 'Ship it', inspiredBy: [idea.id] });
+
+    expect(keyed('goal.created')[0].event.data.inspiredBy).toEqual([
+      { '@id': `urn:aether:idea:${idea.id}` },
+    ]);
+  });
+
+  it('leaves the link out entirely when nothing inspired it', async () => {
+    // An empty list asserts "nothing inspired this", which is a different
+    // claim from not mentioning it.
+    await set(lokal, { title: 'Ship it' });
+
+    expect(keyed('goal.created')[0].event.data).not.toHaveProperty(
+      'inspiredBy',
+    );
+  });
+
+  it('publishes a delete with no data', async () => {
+    const goal = await set(lokal, { title: 'Ship it' });
+    await goals.remove(lokal, goal.id);
+
+    const [{ event }] = keyed('goal.deleted');
+
+    expect(event.type).toBe('aether:ResourceDeleted');
+    expect(event).not.toHaveProperty('data');
+  });
+
+  it('says nothing when the goal was refused', async () => {
+    await expect(
+      set(lokal, {
+        title: 'Ship it',
+        inspiredBy: ['11111111-1111-4111-8111-111111111111'],
+      }),
+    ).rejects.toThrow(NotFoundException);
+
+    expect(keyed('goal.created')).toHaveLength(0);
+  });
+
+  it('publishes events organon will accept', async () => {
+    const idea = await capture(lokal, 'A thought');
+    const goal = await set(lokal, { title: 'Ship it', inspiredBy: [idea.id] });
+    await goals.update(lokal, goal.id, { status: 'COMPLETED' });
+    await goals.remove(lokal, goal.id);
+
+    for (const { event } of publisher.published) {
+      expect(aetherEventSchema.safeParse(event).success).toBe(true);
+    }
+  });
+});
+
+describe('a goal’s own facts', () => {
+  const ALICE = '55555555-5555-4555-8555-555555555555';
+
+  it('starts ACTIVE, not PLANNED', async () => {
+    /*
+     * Setting a goal is committing to it. `PLANNED` is for one deliberately
+     * parked, which is something a person does on purpose rather than a state
+     * to default into.
+     */
+    expect((await set(lokal, { title: 'Ship it' })).status).toBe('ACTIVE');
+  });
+
+  it('can be parked', async () => {
+    const goal = await set(lokal, { title: 'Ship it' });
+
+    expect(
+      (await goals.update(lokal, goal.id, { status: 'PLANNED' })).status,
+    ).toBe('PLANNED');
+  });
+
+  it('starts at no progress, whatever the caller says', async () => {
+    // A goal set at 80% is a claim about work that does not exist.
+    expect((await set(lokal, { title: 'Ship it' })).progress).toBe(0);
+  });
+
+  it('moves its progress', async () => {
+    const goal = await set(lokal, { title: 'Ship it' });
+
+    expect(
+      (await goals.update(lokal, goal.id, { progress: 40 })).progress,
+    ).toBe(40);
+  });
+
+  it('keeps the people it is about', async () => {
+    const goal = await set(lokal, { title: 'Help Alice', involves: [ALICE] });
+
+    expect(goal.involves).toEqual([ALICE]);
+  });
+
+  it('un-ranks with null and leaves the rank alone when unmentioned', async () => {
+    const goal = await set(lokal, { title: 'Ship it', priority: 1 });
+
+    expect(
+      (await goals.update(lokal, goal.id, { title: 'Renamed' })).priority,
+    ).toBe(1);
+    expect(
+      (await goals.update(lokal, goal.id, { priority: null })).priority,
+    ).toBeUndefined();
+  });
+
+  it('announces the people, the rank and the progress', async () => {
+    await set(lokal, {
+      title: 'Help Alice',
+      involves: [ALICE],
+      priority: 2,
+    });
+
+    const { data } = publisher.published[0].event;
+
+    expect(data.involves).toEqual([{ '@id': `urn:aether:person:${ALICE}` }]);
+    expect(data.priority).toBe(2);
+    // Always stated, including zero: "no progress" is a fact about the goal.
+    expect(data.progress).toBe(0);
+  });
+});
+
+afterEach(() => database.close());

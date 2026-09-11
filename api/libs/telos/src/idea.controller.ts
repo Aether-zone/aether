@@ -54,15 +54,22 @@ export class IdeaController {
    * them mutually dependent for one derived field. The controller is the one
    * place that already knows about both.
    */
-  private withInspired(actor: Actor, idea: IdeaRecord): IdeaDTO {
-    return { ...idea, inspired: this.goals.idsInspiredBy(actor, idea.id) };
+  private async withInspired(actor: Actor, idea: IdeaRecord): Promise<IdeaDTO> {
+    return {
+      ...idea,
+      inspired: await this.goals.idsInspiredBy(actor, idea.id),
+    };
   }
 
   @Get()
-  list(@CurrentActor() actor: Actor): IdeaDTO[] {
-    return this.ideas
-      .list(actor)
-      .map((idea) => this.withInspired(actor, idea));
+  async list(@CurrentActor() actor: Actor): Promise<IdeaDTO[]> {
+    // `Promise.all` over the page: each composition is its own read, and
+    // awaiting them in turn would make a list N round trips deep.
+    return Promise.all(
+      (await this.ideas.list(actor)).map((idea) =>
+        this.withInspired(actor, idea),
+      ),
+    );
   }
 
   /**
@@ -71,11 +78,11 @@ export class IdeaController {
    * have been one.
    */
   @Get(':id')
-  get(
+  async get(
     @CurrentActor() actor: Actor,
     @Param('id', ParseUUIDPipe) id: string,
-  ): IdeaDTO {
-    return this.withInspired(actor, this.ideas.get(actor, id));
+  ): Promise<IdeaDTO> {
+    return this.withInspired(actor, await this.ideas.get(actor, id));
   }
 
   /**
@@ -85,14 +92,14 @@ export class IdeaController {
    * `createdBy`: the field is not in the create shape, so it never arrives.
    */
   @Post()
-  create(
+  async create(
     @CurrentActor() actor: Actor,
     @Body(new ZodValidationPipe(createIdeaSchema)) idea: CreateIdeaDTO,
-  ): IdeaDTO {
+  ): Promise<IdeaDTO> {
     // Newly captured, so nothing can have been inspired by it yet — but it is
     // composed the same way rather than hard-coded to `[]`, so there is one
     // path and not two.
-    return this.withInspired(actor, this.ideas.create(actor, idea));
+    return this.withInspired(actor, await this.ideas.create(actor, idea));
   }
 
   /**
@@ -101,21 +108,24 @@ export class IdeaController {
    * silently clears anything the caller forgot to send.
    */
   @Patch(':id')
-  update(
+  async update(
     @CurrentActor() actor: Actor,
     @Param('id', ParseUUIDPipe) id: string,
     @Body(new ZodValidationPipe(updateIdeaSchema)) changes: UpdateIdeaDTO,
-  ): IdeaDTO {
-    return this.withInspired(actor, this.ideas.update(actor, id, changes));
+  ): Promise<IdeaDTO> {
+    return this.withInspired(
+      actor,
+      await this.ideas.update(actor, id, changes),
+    );
   }
 
   /** 204: there is nothing useful to say about an idea that is now gone. */
   @Delete(':id')
   @HttpCode(204)
-  remove(
+  async remove(
     @CurrentActor() actor: Actor,
     @Param('id', ParseUUIDPipe) id: string,
-  ): void {
-    this.ideas.remove(actor, id);
+  ): Promise<void> {
+    await this.ideas.remove(actor, id);
   }
 }

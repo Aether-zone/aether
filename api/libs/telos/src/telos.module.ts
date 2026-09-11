@@ -1,4 +1,10 @@
 import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+
+import { IdeaEntity } from './idea.entity';
+import { GoalEntity } from './goal.entity';
+import { ProjectEntity } from './project.entity';
+import { TaskEntity } from './task.entity';
 
 import { GoalController } from './goal.controller';
 import { GoalService } from './goal.service';
@@ -33,8 +39,21 @@ import { TaskService } from './task.service';
  * `TaskService` → `ProjectService` — so the owning end can refuse a reference
  * to something that does not exist. Controllers compose the reverse: were the
  * services to ask each other, neither could be constructed.
+ *
+ * All four announce their changes on the exchange as JSON-LD, and the links
+ * travel with them as references — so the chain arrives in arachni's graph as
+ * a chain, without arachni being taught anything about telos. A reference is
+ * not ownership: deleting a goal does not take the idea it came from with it.
  */
 @Module({
+  imports: [
+    TypeOrmModule.forFeature([
+      IdeaEntity,
+      GoalEntity,
+      ProjectEntity,
+      TaskEntity,
+    ]),
+  ],
   controllers: [
     IdeaController,
     GoalController,

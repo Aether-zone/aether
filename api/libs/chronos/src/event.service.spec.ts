@@ -8,6 +8,10 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { PlaceService } from '@aether/topos';
 import { UserService } from '@aether/prosopone';
 
+import { TestDatabase } from '../../test-database';
+import { UserEntity } from '@aether/prosopone/user.entity';
+import { PlaceEntity } from '@aether/topos/place.entity';
+import { EventEntity } from './event.entity';
 import { EventService } from './event.service';
 
 class RecordingPublisher {
@@ -48,15 +52,24 @@ let publisher: RecordingPublisher;
 let people: UserService;
 let places: PlaceService;
 let events: EventService;
+let database: TestDatabase;
 let adaId: string;
 let placeId: string;
 
 beforeEach(async () => {
+  database = await TestDatabase.open(EventEntity, UserEntity, PlaceEntity);
   publisher = new RecordingPublisher();
-  /* The real services, in memory: what an event points at has to exist. */
-  people = new UserService(publisher as unknown as EventPublisher);
-  places = new PlaceService(publisher as unknown as EventPublisher);
+  /* The real services on a real store: what an event points at has to exist. */
+  people = new UserService(
+    database.repository(UserEntity),
+    publisher as unknown as EventPublisher,
+  );
+  places = new PlaceService(
+    database.repository(PlaceEntity),
+    publisher as unknown as EventPublisher,
+  );
   events = new EventService(
+    database.repository(EventEntity),
     publisher as unknown as EventPublisher,
     people,
     places,
@@ -97,7 +110,7 @@ describe('creating', () => {
       }),
     ).rejects.toThrow(NotFoundException);
 
-    expect(events.list(actor)).toEqual([]);
+    expect(await events.list(actor)).toEqual([]);
   });
 
   it('refuses a place this organization does not have', async () => {
@@ -132,7 +145,7 @@ describe('reading it back', () => {
 
     await people.remove(actor, adaId);
 
-    expect(events.get(actor, created.id).attendees).toEqual([]);
+    expect((await events.get(actor, created.id)).attendees).toEqual([]);
   });
 
   it('leaves the place unstated when it was deleted since', async () => {
@@ -140,7 +153,7 @@ describe('reading it back', () => {
 
     await places.remove(actor, placeId);
 
-    expect(events.get(actor, created.id).location).toBeUndefined();
+    expect((await events.get(actor, created.id)).location).toBeUndefined();
   });
 });
 
@@ -247,3 +260,5 @@ describe('the events it announces', () => {
     }
   });
 });
+
+afterEach(() => database.close());

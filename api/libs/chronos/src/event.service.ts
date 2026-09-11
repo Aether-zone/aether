@@ -4,7 +4,9 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'node:crypto';
+import { Repository } from 'typeorm';
 
 import {
   AETHER_SOURCE,
@@ -29,6 +31,7 @@ import {
 import { PlaceService } from '@aether/topos';
 import { UserService } from '@aether/prosopone';
 
+import { EventEntity } from './event.entity';
 import { eventIri, toEventDocument, type EventJsonLD } from './event.json-ld';
 
 /**
@@ -49,51 +52,55 @@ import { eventIri, toEventDocument, type EventJsonLD } from './event.json-ld';
 export class EventService {
   private readonly logger = new Logger(EventService.name);
 
-  private readonly events: StoredEvent[] = [];
-
   constructor(
+    @InjectRepository(EventEntity)
+    private readonly events: Repository<EventEntity>,
     private readonly publisher: EventPublisher,
     private readonly people: UserService,
     private readonly places: PlaceService,
   ) {}
 
-  list(actor: Actor): EventDTO[] {
-    return this.events
-      .filter((event) => event.organizationId === actor.organizationId)
-      .map((event) => this.resolve(actor, event));
+  async list(actor: Actor): Promise<EventDTO[]> {
+    const rows = await this.events.find({
+      where: { organizationId: actor.organizationId },
+      // A calendar is read by when, so the store hands it back that way.
+      order: { startsAt: 'ASC' },
+    });
+
+    return Promise.all(rows.map((event) => this.resolve(actor, event)));
   }
 
-  get(actor: Actor, id: string): EventDTO {
-    return this.resolve(actor, this.stored(actor, id));
+  async get(actor: Actor, id: string): Promise<EventDTO> {
+    return this.resolve(actor, await this.stored(actor, id));
   }
 
   async create(actor: Actor, input: CreateEventDTO): Promise<EventDTO> {
     // Resolved before anything is stored, so an unknown attendee is a 404
     // rather than an event that exists and cannot be read back.
-    this.requireReferences(actor, input.attendeeIds, input.locationId);
+    await this.requireReferences(actor, input.attendeeIds, input.locationId);
 
     const now = new Date().toISOString();
 
-    const event: StoredEvent = {
-      id: randomUUID(),
-      organizationId: actor.organizationId,
-      type: input.type,
-      title: input.title,
-      description: input.description,
-      startsAt: input.startsAt,
-      endsAt: input.endsAt,
-      locationId: input.locationId ?? null,
-      organizerId: input.organizerId,
-      attendeeIds: input.attendeeIds,
-      // Every event starts scheduled; the status moves afterwards.
-      status: 'SCHEDULED',
-      createdAt: now,
-      updatedAt: now,
-    };
+    const event = await this.events.save(
+      this.events.create({
+        id: randomUUID(),
+        organizationId: actor.organizationId,
+        type: input.type,
+        title: input.title,
+        description: input.description ?? null,
+        startsAt: input.startsAt,
+        endsAt: input.endsAt ?? null,
+        locationId: input.locationId ?? null,
+        organizerId: input.organizerId ?? null,
+        attendeeIds: input.attendeeIds,
+        // Every event starts scheduled; the status moves afterwards.
+        status: 'SCHEDULED',
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
 
-    this.events.push(event);
-
-    const dto = this.resolve(actor, event);
+    const dto = await this.resolve(actor, event);
 
     await this.announce(EVENT_CREATED, 'aether:ResourceCreated', dto, actor);
 
@@ -105,9 +112,9 @@ export class EventService {
     id: string,
     changes: UpdateEventDTO,
   ): Promise<EventDTO> {
-    const existing = this.stored(actor, id);
+    const existing = await this.stored(actor, id);
 
-    this.requireReferences(
+    await this.requireReferences(
       actor,
       changes.attendeeIds,
       // `undefined` means "leave it alone", `null` means "clear it" — only a
@@ -115,7 +122,7 @@ export class EventService {
       changes.locationId ?? undefined,
     );
 
-    const updated: StoredEvent = {
+    const updated: EventEntity = {
       ...existing,
       ...changes,
       /*
@@ -130,7 +137,7 @@ export class EventService {
       organizerId:
         changes.organizerId === undefined
           ? existing.organizerId
-          : (changes.organizerId ?? undefined),
+          : (changes.organizerId ?? null),
       attendeeIds: changes.attendeeIds ?? existing.attendeeIds,
       updatedAt: new Date().toISOString(),
     };
@@ -149,9 +156,9 @@ export class EventService {
       });
     }
 
-    this.events[this.events.indexOf(existing)] = updated;
+    await this.events.save(updated);
 
-    const dto = this.resolve(actor, updated);
+    const dto = await this.resolve(actor, updated);
 
     await this.announce(EVENT_UPDATED, 'aether:ResourceUpdated', dto, actor);
 
@@ -159,10 +166,12 @@ export class EventService {
   }
 
   async remove(actor: Actor, id: string): Promise<void> {
-    const event = this.stored(actor, id);
-    const dto = this.resolve(actor, event);
+    const event = await this.stored(actor, id);
+    // Resolved before the delete: afterwards there is no row to describe, and
+    // the event announcing the deletion still has to say what went.
+    const dto = await this.resolve(actor, event);
 
-    this.events.splice(this.events.indexOf(event), 1);
+    await this.events.remove({ ...event });
 
     await this.announce(EVENT_DELETED, 'aether:ResourceDeleted', dto, actor);
   }
@@ -213,29 +222,31 @@ export class EventService {
   }
 
   /** Fails unless every person and place named exists in this organization. */
-  private requireReferences(
+  private async requireReferences(
     actor: Actor,
     attendeeIds: string[] | undefined,
     locationId: string | undefined,
-  ): void {
+  ): Promise<void> {
+    // `get` rejects with a 404 for someone this organization does not have,
+    // which is the answer: the caller named somebody who is not here. Awaited
+    // in turn rather than in parallel, so the first unknown id is the one
+    // reported — `Promise.all` would surface whichever query finished first.
     for (const attendeeId of attendeeIds ?? []) {
-      // `get` throws a 404 for someone this organization does not have, which
-      // is the answer: the caller named somebody who is not here.
-      this.people.get(actor, attendeeId);
+      await this.people.get(actor, attendeeId);
     }
 
     if (locationId) {
-      this.places.get(actor, locationId);
+      await this.places.get(actor, locationId);
     }
   }
 
   /** The stored record as a DTO, with people and place filled in. */
-  private resolve(actor: Actor, event: StoredEvent): EventDTO {
+  private async resolve(actor: Actor, event: EventEntity): Promise<EventDTO> {
     const attendees: UserDTO[] = [];
 
     for (const attendeeId of event.attendeeIds) {
       try {
-        attendees.push(this.people.get(actor, attendeeId));
+        attendees.push(await this.people.get(actor, attendeeId));
       } catch {
         /*
          * Someone removed from prosopone since. Skipped rather than failing
@@ -249,7 +260,7 @@ export class EventService {
 
     if (event.locationId) {
       try {
-        location = this.places.get(actor, event.locationId);
+        location = await this.places.get(actor, event.locationId);
       } catch {
         // Likewise: a place deleted since leaves the event somewhere unstated.
       }
@@ -271,12 +282,12 @@ export class EventService {
     };
   }
 
-  private stored(actor: Actor, id: string): StoredEvent {
-    const event = this.events.find(
-      (candidate) =>
-        candidate.id === id &&
-        candidate.organizationId === actor.organizationId,
-    );
+  private async stored(actor: Actor, id: string): Promise<EventEntity> {
+    // The tenant is part of the lookup, not a check after it.
+    const event = await this.events.findOneBy({
+      id,
+      organizationId: actor.organizationId,
+    });
 
     if (!event) {
       throw new NotFoundException(`No event with id ${id}.`);
@@ -285,25 +296,3 @@ export class EventService {
     return event;
   }
 }
-
-/**
- * An event as held here: ids rather than the resources they name.
- *
- * Storing whole people would mean a name corrected in prosopone staying wrong
- * on every event that ever mentioned them.
- */
-type StoredEvent = {
-  id: string;
-  organizationId: string;
-  type: EventDTO['type'];
-  title: string;
-  description?: string;
-  startsAt: string;
-  endsAt?: string;
-  locationId: string | null;
-  organizerId?: string;
-  attendeeIds: string[];
-  status: EventDTO['status'];
-  createdAt: string;
-  updatedAt: string;
-};

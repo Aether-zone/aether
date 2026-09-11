@@ -17,10 +17,6 @@
  * resources this domain owns*. Writing down a schema before there is a screen
  * that needs it would be inventing the domain rather than recording it.
  */
-export const CHRONOS_RESOURCES = [
-  'Calendar',
-  'Event',
-  'Schedule',
-] as const;
+export const CHRONOS_RESOURCES = ['Calendar', 'Event', 'Schedule'] as const;
 
 export type ChronosResource = (typeof CHRONOS_RESOURCES)[number];

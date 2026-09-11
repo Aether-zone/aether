@@ -4,7 +4,9 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'node:crypto';
+import { Repository } from 'typeorm';
 
 import {
   AETHER_SOURCE,
@@ -12,11 +14,7 @@ import {
   PERSON_DELETED,
   PERSON_UPDATED,
 } from '@aether/contract';
-import type {
-  CreateUserDTO,
-  UpdateUserDTO,
-  UserDTO,
-} from '@aether/contract';
+import type { CreateUserDTO, UpdateUserDTO, UserDTO } from '@aether/contract';
 import {
   EventPublisher,
   type Actor,
@@ -24,6 +22,7 @@ import {
   type AetherEventType,
 } from '@aether-zone/organon';
 
+import { UserEntity } from './user.entity';
 import { personIri, toPersonDocument, type PersonJsonLD } from './user.json-ld';
 
 /**
@@ -52,19 +51,24 @@ import { personIri, toPersonDocument, type PersonJsonLD } from './user.json-ld';
 export class UserService {
   private readonly logger = new Logger(UserService.name);
 
-  constructor(private readonly events: EventPublisher) {}
-
   /**
    * Keyed by `organizationId/id`, so one tenant's ids cannot collide with
    * another's and a lookup is not a scan.
    */
-  private readonly users = new Map<string, StoredUser>();
+  constructor(
+    @InjectRepository(UserEntity)
+    private readonly users: Repository<UserEntity>,
+    private readonly events: EventPublisher,
+  ) {}
 
   /** Every user in this organization, oldest first — a Map keeps insertion order. */
-  list(actor: Actor): UserDTO[] {
-    return [...this.users.values()]
-      .filter((user) => user.organizationId === actor.organizationId)
-      .map(toDto);
+  async list(actor: Actor): Promise<UserDTO[]> {
+    const rows = await this.users.find({
+      where: { organizationId: actor.organizationId },
+      order: { lastName: 'ASC', firstName: 'ASC' },
+    });
+
+    return rows.map(toDto);
   }
 
   /**
@@ -74,8 +78,8 @@ export class UserService {
    * exist. Telling the two apart would answer "does this id exist somewhere"
    * for anyone who cared to ask.
    */
-  get(actor: Actor, id: string): UserDTO {
-    return toDto(this.stored(actor, id));
+  async get(actor: Actor, id: string): Promise<UserDTO> {
+    return toDto(await this.stored(actor, id));
   }
 
   /**
@@ -86,15 +90,15 @@ export class UserService {
    * is Node's own, so this needs no dependency to make one.
    */
   async create(actor: Actor, input: CreateUserDTO): Promise<UserDTO> {
-    this.refuseDuplicateEmail(actor, input.email);
+    await this.refuseDuplicateEmail(actor, input.email);
 
-    const user: StoredUser = {
-      id: randomUUID(),
-      organizationId: actor.organizationId,
-      ...input,
-    };
-
-    this.users.set(key(actor.organizationId, user.id), user);
+    const user = await this.users.save(
+      this.users.create({
+        id: randomUUID(),
+        organizationId: actor.organizationId,
+        ...input,
+      }),
+    );
 
     await this.announce(PERSON_CREATED, 'aether:ResourceCreated', user, actor);
 
@@ -204,15 +208,13 @@ export class UserService {
     id: string,
     changes: UpdateUserDTO,
   ): Promise<UserDTO> {
-    const existing = this.stored(actor, id);
+    const existing = await this.stored(actor, id);
 
     if (changes.email && changes.email !== existing.email) {
-      this.refuseDuplicateEmail(actor, changes.email);
+      await this.refuseDuplicateEmail(actor, changes.email);
     }
 
-    const updated: StoredUser = { ...existing, ...changes };
-
-    this.users.set(key(actor.organizationId, id), updated);
+    const updated = await this.users.save({ ...existing, ...changes });
 
     /*
      * The whole document, not the changed fields. An Aether event describes
@@ -221,7 +223,12 @@ export class UserService {
      * create, or was deployed yesterday — still ends up with everything. A
      * patch would only work for consumers that already agreed with us.
      */
-    await this.announce(PERSON_UPDATED, 'aether:ResourceUpdated', updated, actor);
+    await this.announce(
+      PERSON_UPDATED,
+      'aether:ResourceUpdated',
+      updated,
+      actor,
+    );
 
     return toDto(updated);
   }
@@ -233,11 +240,23 @@ export class UserService {
    * The comparison needs no `toLowerCase` — the contract lowercases on the way
    * in, so every address in here is already in one spelling.
    */
-  private refuseDuplicateEmail(actor: Actor, email: string): void {
-    for (const user of this.users.values()) {
-      if (user.organizationId === actor.organizationId && user.email === email) {
-        throw new ConflictException(`${email} already belongs to a user.`);
-      }
+  private async refuseDuplicateEmail(
+    actor: Actor,
+    email: string,
+  ): Promise<void> {
+    /*
+     * Checked here *and* enforced by a unique index on the table. The check
+     * is what turns it into a 409 with a sentence somebody can read; the index
+     * is what makes it true when two requests arrive at once and both find
+     * nothing.
+     */
+    const taken = await this.users.findOneBy({
+      organizationId: actor.organizationId,
+      email,
+    });
+
+    if (taken) {
+      throw new ConflictException(`${email} already belongs to a user.`);
     }
   }
 
@@ -245,16 +264,26 @@ export class UserService {
   async remove(actor: Actor, id: string): Promise<void> {
     // `stored` for the side effect of throwing: deleting nothing and reporting
     // success would hide a caller working from a stale list.
-    const removed = this.stored(actor, id);
+    const removed = await this.stored(actor, id);
 
-    this.users.delete(key(actor.organizationId, id));
+    await this.users.remove({ ...removed });
 
-    await this.announce(PERSON_DELETED, 'aether:ResourceDeleted', removed, actor);
+    await this.announce(
+      PERSON_DELETED,
+      'aether:ResourceDeleted',
+      removed,
+      actor,
+    );
   }
 
   /** The stored record, including the tenant the DTO does not carry. */
-  private stored(actor: Actor, id: string): StoredUser {
-    const user = this.users.get(key(actor.organizationId, id));
+  private async stored(actor: Actor, id: string): Promise<UserEntity> {
+    // The tenant is part of the lookup, not a check after it: asked this way
+    // the query cannot return another organization's row at all.
+    const user = await this.users.findOneBy({
+      id,
+      organizationId: actor.organizationId,
+    });
 
     if (!user) {
       throw new NotFoundException(`No user with id ${id}.`);
@@ -272,9 +301,13 @@ export class UserService {
  * restating what the caller already said — and a client that read it from the
  * body might start sending it *as* the body.
  */
-type StoredUser = UserDTO & { organizationId: string };
+type StoredUser = UserEntity;
 
-const key = (organizationId: string, id: string) => `${organizationId}/${id}`;
-
-const toDto = ({ organizationId: _organizationId, ...user }: StoredUser): UserDTO =>
-  user;
+/** A row as the api answers with it: the tenant dropped, nothing else to map. */
+const toDto = (user: UserEntity): UserDTO => ({
+  id: user.id,
+  firstName: user.firstName,
+  lastName: user.lastName,
+  email: user.email,
+  phoneNumber: user.phoneNumber,
+});

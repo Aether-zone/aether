@@ -62,3 +62,7 @@ test-output
 
 # Backups of a local env file carry the same secrets it does.
 .env.bak.*
+
+# Incremental-build state. Machine-specific, changes on every build, and
+# regenerated from source — it is output, not a record of anything.
+*.tsbuildinfo

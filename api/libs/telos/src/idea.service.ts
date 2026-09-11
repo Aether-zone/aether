@@ -1,46 +1,54 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'node:crypto';
+import { Repository } from 'typeorm';
 
-import type {
-  CreateIdeaDTO,
-  IdeaDTO,
-  UpdateIdeaDTO,
-} from '@aether/contract';
-import type { Actor } from '@aether-zone/organon';
+import { IDEA_CREATED, IDEA_DELETED, IDEA_UPDATED } from '@aether/contract';
+import type { CreateIdeaDTO, IdeaDTO, UpdateIdeaDTO } from '@aether/contract';
+import {
+  EventPublisher,
+  type Actor,
+  type AetherEventType,
+} from '@aether-zone/organon';
+
+import { announce } from '@aether/events';
+
+import { IdeaEntity } from './idea.entity';
+import { ideaIri, toIdeaDocument } from './telos.json-ld';
 
 /**
  * The ideas telos is holding.
  *
- * **In memory, deliberately and temporarily** — a placeholder for a
- * repository, not a cache in front of one. Everything is lost on restart and
- * nothing is shared between instances; swapping it for a persistent store
- * should change nothing above this class, which is why the methods take an
- * `Actor` and return plain DTOs.
+ * **Backed by SQLite**, through the repository `TelosModule` asks for with
+ * `TypeOrmModule.forFeature`.
  *
  * **Scoped to an organization.** Every method takes the actor the route's
  * guard produced and can only see that organization's ideas, so there is no
  * call path that reads across the boundary.
  *
- * Nothing here announces itself on the exchange, unlike people, places and
- * calendar entries. Nothing consumes an idea, and announcing to an empty room
- * is wiring to maintain for no reader; when something does, this class is the
- * seam and `PlaceService` shows the shape.
+ * **Announces every change on the exchange**, as people, places and calendar
+ * entries do. A publish that fails is logged and swallowed: the record has
+ * already changed, and failing the request would tell the caller their write
+ * did not happen when it did.
  */
 @Injectable()
 export class IdeaService {
-  /**
-   * An array, which is what a placeholder wants: it reads as the list it is,
-   * and its order is the order things were captured. Every lookup is a scan,
-   * which is irrelevant at this size and the wrong thing to optimise — the fix
-   * is a database, not a cleverer structure in front of one.
-   */
-  private readonly ideas: StoredIdea[] = [];
+  private readonly logger = new Logger(IdeaService.name);
+
+  constructor(
+    @InjectRepository(IdeaEntity)
+    private readonly ideas: Repository<IdeaEntity>,
+    private readonly events: EventPublisher,
+  ) {}
 
   /** Every idea in this organization, oldest first. */
-  list(actor: Actor): IdeaRecord[] {
-    return this.ideas
-      .filter((idea) => idea.organizationId === actor.organizationId)
-      .map(toDto);
+  async list(actor: Actor): Promise<IdeaRecord[]> {
+    const rows = await this.ideas.find({
+      where: { organizationId: actor.organizationId },
+      order: { createdAt: 'ASC' },
+    });
+
+    return rows.map(toDto);
   }
 
   /**
@@ -50,8 +58,8 @@ export class IdeaService {
    * exist. Telling the two apart would answer "does this id exist somewhere"
    * for anyone who cared to ask.
    */
-  get(actor: Actor, id: string): IdeaRecord {
-    return toDto(this.stored(actor, id));
+  async get(actor: Actor, id: string): Promise<IdeaRecord> {
+    return toDto(await this.stored(actor, id));
   }
 
   /**
@@ -65,20 +73,25 @@ export class IdeaService {
    * down just now" and "already decided against" indistinguishable at the
    * moment of capture.
    */
-  create(actor: Actor, input: CreateIdeaDTO): IdeaRecord {
+  async create(actor: Actor, input: CreateIdeaDTO): Promise<IdeaRecord> {
     const now = new Date().toISOString();
 
-    const idea: StoredIdea = {
-      id: randomUUID(),
-      organizationId: actor.organizationId,
-      status: 'CAPTURED',
-      ...input,
-      createdAt: now,
-      updatedAt: now,
-      createdBy: actor.id,
-    };
+    const idea = await this.ideas.save(
+      this.ideas.create({
+        id: randomUUID(),
+        organizationId: actor.organizationId,
+        status: 'CAPTURED',
+        title: input.title,
+        description: input.description ?? null,
+        priority: input.priority ?? null,
+        involves: input.involves,
+        createdAt: now,
+        updatedAt: now,
+        createdBy: actor.id,
+      }),
+    );
 
-    this.ideas.push(idea);
+    await this.announce(IDEA_CREATED, 'aether:ResourceCreated', idea, actor);
 
     return toDto(idea);
   }
@@ -90,10 +103,14 @@ export class IdeaService {
    * caller promoting an idea should not have to send the description back, and
    * a replace would silently clear anything they left out.
    */
-  update(actor: Actor, id: string, changes: UpdateIdeaDTO): IdeaRecord {
-    const existing = this.stored(actor, id);
+  async update(
+    actor: Actor,
+    id: string,
+    changes: UpdateIdeaDTO,
+  ): Promise<IdeaRecord> {
+    const existing = await this.stored(actor, id);
 
-    const updated: StoredIdea = {
+    const updated = await this.ideas.save({
       ...existing,
       ...changes,
       /*
@@ -101,37 +118,49 @@ export class IdeaService {
        * removes it — spreading `changes` would otherwise write the `null`
        * straight through as a value the stored shape does not have.
        */
-      description:
-        changes.description === undefined
-          ? existing.description
-          : (changes.description ?? undefined),
-      priority:
-        changes.priority === undefined
-          ? existing.priority
-          : (changes.priority ?? undefined),
+      description: merge(existing.description, changes.description),
+      priority: merge(existing.priority, changes.priority),
       updatedAt: new Date().toISOString(),
-    };
+    });
 
-    this.ideas[this.ideas.indexOf(existing)] = updated;
+    await this.announce(IDEA_UPDATED, 'aether:ResourceUpdated', updated, actor);
 
     return toDto(updated);
   }
 
   /** Forgets an idea. Deleting one that is not here is a 404, not a shrug. */
-  remove(actor: Actor, id: string): void {
+  async remove(actor: Actor, id: string): Promise<void> {
     // `stored` for the side effect of throwing: deleting nothing and reporting
     // success would hide a caller working from a stale list.
-    const idea = this.stored(actor, id);
+    const idea = await this.stored(actor, id);
 
-    this.ideas.splice(this.ideas.indexOf(idea), 1);
+    await this.ideas.remove({ ...idea });
+
+    await this.announce(IDEA_DELETED, 'aether:ResourceDeleted', idea, actor);
   }
 
-  private stored(actor: Actor, id: string): StoredIdea {
-    const idea = this.ideas.find(
-      (candidate) =>
-        candidate.id === id &&
-        candidate.organizationId === actor.organizationId,
-    );
+  private announce(
+    routingKey: string,
+    type: AetherEventType,
+    idea: StoredIdea,
+    actor: Actor,
+  ): Promise<void> {
+    return announce(this.events, this.logger, {
+      routingKey,
+      type,
+      subject: ideaIri(idea.id),
+      organizationId: idea.organizationId,
+      actor,
+      document: toIdeaDocument(toDto(idea)),
+    });
+  }
+
+  private async stored(actor: Actor, id: string): Promise<IdeaEntity> {
+    // The tenant is part of the lookup, not a check after it.
+    const idea = await this.ideas.findOneBy({
+      id,
+      organizationId: actor.organizationId,
+    });
 
     if (!idea) {
       throw new NotFoundException(`No idea with id ${id}.`);
@@ -159,9 +188,21 @@ export type IdeaRecord = Omit<IdeaDTO, 'inspired'>;
  * what the caller already said — and a client that read it from the body might
  * start sending it *as* the body.
  */
-type StoredIdea = IdeaRecord & { organizationId: string };
+type StoredIdea = IdeaEntity;
 
-const toDto = ({
-  organizationId: _organizationId,
-  ...idea
-}: StoredIdea): IdeaRecord => idea;
+/** `undefined` keeps what is there; `null` clears it. */
+const merge = <T>(current: T | null, change: T | null | undefined): T | null =>
+  change === undefined ? current : change;
+
+/** A row as the api answers with it: tenant dropped, `null` becomes absent. */
+const toDto = (idea: IdeaEntity): IdeaRecord => ({
+  id: idea.id,
+  title: idea.title,
+  ...(idea.description === null ? {} : { description: idea.description }),
+  status: idea.status,
+  ...(idea.priority === null ? {} : { priority: idea.priority }),
+  involves: idea.involves,
+  createdAt: idea.createdAt,
+  updatedAt: idea.updatedAt,
+  createdBy: idea.createdBy,
+});

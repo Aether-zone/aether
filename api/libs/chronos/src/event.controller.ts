@@ -46,15 +46,15 @@ export class EventController {
   constructor(private readonly events: EventService) {}
 
   @Get()
-  list(@CurrentActor() actor: Actor): EventDTO[] {
+  async list(@CurrentActor() actor: Actor): Promise<EventDTO[]> {
     return this.events.list(actor);
   }
 
   @Get(':id')
-  get(
+  async get(
     @CurrentActor() actor: Actor,
     @Param('id', ParseUUIDPipe) id: string,
-  ): EventDTO {
+  ): Promise<EventDTO> {
     return this.events.get(actor, id);
   }
 

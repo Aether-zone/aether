@@ -53,7 +53,7 @@ export class UserController {
   constructor(private readonly users: UserService) {}
 
   @Get()
-  list(@CurrentActor() actor: Actor): UserDTO[] {
+  async list(@CurrentActor() actor: Actor): Promise<UserDTO[]> {
     return this.users.list(actor);
   }
 
@@ -63,10 +63,10 @@ export class UserController {
    * have been one.
    */
   @Get(':id')
-  get(
+  async get(
     @CurrentActor() actor: Actor,
     @Param('id', ParseUUIDPipe) id: string,
-  ): UserDTO {
+  ): Promise<UserDTO> {
     return this.users.get(actor, id);
   }
 

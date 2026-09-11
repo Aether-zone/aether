@@ -1,4 +1,7 @@
 import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+
+import { EventEntity } from './event.entity';
 
 import { ProsoponeModule } from '@aether/prosopone';
 import { ToposModule } from '@aether/topos';
@@ -19,7 +22,11 @@ import { EventService } from './event.service';
  * anywhere.
  */
 @Module({
-  imports: [ProsoponeModule, ToposModule],
+  imports: [
+    TypeOrmModule.forFeature([EventEntity]),
+    ProsoponeModule,
+    ToposModule,
+  ],
   controllers: [EventController],
   providers: [EventService],
   exports: [EventService],

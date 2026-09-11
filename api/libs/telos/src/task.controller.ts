@@ -43,7 +43,7 @@ export class TaskController {
   constructor(private readonly tasks: TaskService) {}
 
   @Get()
-  list(@CurrentActor() actor: Actor): TaskDTO[] {
+  async list(@CurrentActor() actor: Actor): Promise<TaskDTO[]> {
     return this.tasks.list(actor);
   }
 
@@ -53,10 +53,10 @@ export class TaskController {
    * have been one.
    */
   @Get(':id')
-  get(
+  async get(
     @CurrentActor() actor: Actor,
     @Param('id', ParseUUIDPipe) id: string,
-  ): TaskDTO {
+  ): Promise<TaskDTO> {
     return this.tasks.get(actor, id);
   }
 
@@ -64,7 +64,7 @@ export class TaskController {
   create(
     @CurrentActor() actor: Actor,
     @Body(new ZodValidationPipe(createTaskSchema)) task: CreateTaskDTO,
-  ): TaskDTO {
+  ): Promise<TaskDTO> {
     return this.tasks.create(actor, task);
   }
 
@@ -78,7 +78,7 @@ export class TaskController {
     @CurrentActor() actor: Actor,
     @Param('id', ParseUUIDPipe) id: string,
     @Body(new ZodValidationPipe(updateTaskSchema)) changes: UpdateTaskDTO,
-  ): TaskDTO {
+  ): Promise<TaskDTO> {
     return this.tasks.update(actor, id, changes);
   }
 
@@ -88,7 +88,7 @@ export class TaskController {
   remove(
     @CurrentActor() actor: Actor,
     @Param('id', ParseUUIDPipe) id: string,
-  ): void {
-    this.tasks.remove(actor, id);
+  ): Promise<void> {
+    return this.tasks.remove(actor, id);
   }
 }

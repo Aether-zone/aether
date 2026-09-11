@@ -26,16 +26,27 @@ One library per domain, under `libs/`:
 | `@aether/topos` | place | Place, Address, Location |
 | `@aether/tekmerion` | evidence | Resource |
 
+One library that is not a domain:
+
+| | |
+| --- | --- |
+| `@aether/events` | putting a resource change on the exchange |
+
 **Libraries rather than folders**, because a dependency between two domains
 then has to be written as an import of a published entry point. `@aether/telos`
 can reach `@aether/prosopone` only through its barrel; reaching into its
 internals does not typecheck. Six directories under `src/` would have made the
 same coupling invisible.
 
-Each is empty. The console's screens for these resources are placeholders that
-call no api, so what a library carries today is the seam and the list of
-resources the domain owns — controllers, services and entities go in as each
-screen stops being a placeholder.
+`telos`, `topos`, `prosopone`, `chronos` and `tekmerion` have controllers and
+services; `oikonomos` is still the seam and the list of resources it owns.
+Every service holds its records in memory — a placeholder for a repository,
+not a cache in front of one.
+
+`@aether/events` exists because a second domain needed the same forty lines.
+`telos` and `tekmerion` announce through it; `prosopone`, `topos` and `chronos`
+still each keep a private copy, and should move to it when someone next has
+reason to touch them.
 
 `mneme` and `arachni` appear in the console's sidebar but have **no library
 here**: they are separate services with their own repositories, so what aether
@@ -47,12 +58,55 @@ needs of them is a client, not a domain.
 pnpm exec nest generate library <name>   # prefix: @aether
 ```
 
-Then check three things the generator gets wrong for this repo: it re-adds
+Then check four things the generator gets wrong for this repo: it re-adds
 `"webpack": true` to `nest-cli.json`, it writes `paths` into `tsconfig.json`
 (which compiles nothing — they belong in `tsconfig.app.json`, which the build
-extends), and it does not touch `moduleNameMapper` in `jest.config.cts`, which
-has to stay in step or specs cannot resolve the alias. `src/domains.spec.ts`
-fails when it does not.
+extends), it does not touch `moduleNameMapper` in `jest.config.cts`, which has
+to stay in step or specs cannot resolve the alias, and it misses `paths` in
+`tsconfig.spec.json`, which keeps its own copy.
+
+Those last two fail in different ways and neither implies the other: jest reads
+`moduleNameMapper` and not `paths`, tsc reads `paths` and not
+`moduleNameMapper`. A library wired in one but not the other has passing tests
+that do not typecheck, or the reverse. `src/domains.spec.ts` catches it for a
+domain library; a library that is not a domain needs a spec of its own that
+imports through the alias, which is what `libs/events/src/announce.spec.ts`
+does.
+
+Paths must be written `./libs/<name>/src` — a bare `libs/…` is TS5090, since
+`baseUrl` is not set.
+
+## The database
+
+SQLite, through TypeORM. `DatabaseModule` opens the one connection with
+`forRoot`; each domain library asks for the repositories of its own entities
+with `TypeOrmModule.forFeature`. That split is what stops a domain reaching
+outside itself — `@aether/telos` cannot obtain a `Repository<UserEntity>` at
+all, where a single module registering every entity would have handed each
+domain the whole schema.
+
+Entities are found by `autoLoadEntities`, so adding one means writing the file
+and adding it to that library's `forFeature`. There is no central list to
+forget.
+
+`DATABASE_SYNCHRONIZE` defaults on outside production, which is what makes a
+fresh checkout runnable. **It is not a migration strategy**: it drops columns
+whose entity fields disappear, and their data with them. When aether has data
+anyone would miss, this goes off and migrations go in.
+
+Two things that bite when adding an entity:
+
+- A column whose TypeScript type is a **union of string literals** needs an
+  explicit `type: 'text'`. `emitDecoratorMetadata` emits `Object` for any
+  union, so TypeORM has nothing to infer from and refuses to build the schema
+  — the error is a connection failure, which says nothing about the cause.
+- `simple-array` is a comma-joined string. Safe for uuids, which cannot
+  contain a comma; anything holding free text needs `simple-json`.
+
+Specs get a real database rather than a fake repository: `libs/test-database.ts`
+opens SQLite in memory from the entities themselves. A stub would agree with
+whatever its author assumed, and these services depend on what the store
+actually does with a `null`, a `simple-array` and a unique index.
 
 ## What is wired
 

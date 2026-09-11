@@ -1,16 +1,25 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'node:crypto';
+import { Repository } from 'typeorm';
 
-import type {
-  CreateGoalDTO,
-  GoalDTO,
-  UpdateGoalDTO,
-} from '@aether/contract';
-import type { Actor } from '@aether-zone/organon';
+import { GOAL_CREATED, GOAL_DELETED, GOAL_UPDATED } from '@aether/contract';
+import type { CreateGoalDTO, GoalDTO, UpdateGoalDTO } from '@aether/contract';
+import {
+  EventPublisher,
+  type Actor,
+  type AetherEventType,
+} from '@aether-zone/organon';
+
+import { announce } from '@aether/events';
+
+import { GoalEntity } from './goal.entity';
+import { goalIri, toGoalDocument } from './telos.json-ld';
 
 import { IdeaService } from './idea.service';
 
@@ -26,15 +35,19 @@ import { IdeaService } from './idea.service';
  */
 @Injectable()
 export class GoalService {
-  private readonly goals: StoredGoal[] = [];
-
+  private readonly logger = new Logger(GoalService.name);
   /*
    * One direction only. A goal validates the ideas it names, so it needs the
    * ideas; an idea's `inspired` is read back out of the goals, and doing that
    * here rather than in `IdeaService` is what keeps these two from depending
    * on each other. `IdeaController` composes the other end.
    */
-  constructor(private readonly ideas: IdeaService) {}
+  constructor(
+    @InjectRepository(GoalEntity)
+    private readonly goals: Repository<GoalEntity>,
+    private readonly ideas: IdeaService,
+    private readonly events: EventPublisher,
+  ) {}
 
   /**
    * The goals in this organization that name a given idea.
@@ -43,13 +56,21 @@ export class GoalService {
    * the idea as well would give two records of one fact, and nothing could say
    * which was right when they disagreed.
    */
-  idsInspiredBy(actor: Actor, ideaId: string): string[] {
-    return this.goals
-      .filter(
-        (goal) =>
-          goal.organizationId === actor.organizationId &&
-          goal.inspiredBy.includes(ideaId),
-      )
+  async idsInspiredBy(actor: Actor, ideaId: string): Promise<string[]> {
+    /*
+     * `inspiredBy` is a comma-joined column, so the match happens in memory
+     * over this tenant's goals rather than in SQL. A `LIKE '%id%'` would push
+     * it into the query and match a goal whose *other* id merely contained
+     * this one as a substring — wrong for the sake of looking clever. When
+     * there are enough goals for that to matter, the fix is a join table.
+     */
+    const rows = await this.goals.find({
+      where: { organizationId: actor.organizationId },
+      order: { createdAt: 'ASC' },
+    });
+
+    return rows
+      .filter((goal) => goal.inspiredBy.includes(ideaId))
       .map((goal) => goal.id);
   }
 
@@ -60,19 +81,24 @@ export class GoalService {
    * inspired this goal and got a goal inspired by nothing has been told
    * nothing, and would find out much later.
    */
-  private requireIdeas(actor: Actor, ideaIds: string[]): void {
+  private async requireIdeas(actor: Actor, ideaIds: string[]): Promise<void> {
+    // `get` rejects for one this organization does not have, which is the
+    // answer: the caller named something that is not here. Awaited in turn
+    // rather than in parallel, so the first missing id is the one reported —
+    // `Promise.all` would surface whichever query happened to finish first.
     for (const ideaId of ideaIds) {
-      // `get` throws for one this organization does not have, which is the
-      // answer: the caller named something that is not here.
-      this.ideas.get(actor, ideaId);
+      await this.ideas.get(actor, ideaId);
     }
   }
 
   /** Every goal in this organization, oldest first. */
-  list(actor: Actor): GoalDTO[] {
-    return this.goals
-      .filter((goal) => goal.organizationId === actor.organizationId)
-      .map(toDto);
+  async list(actor: Actor): Promise<GoalRecord[]> {
+    const rows = await this.goals.find({
+      where: { organizationId: actor.organizationId },
+      order: { createdAt: 'ASC' },
+    });
+
+    return rows.map(toDto);
   }
 
   /**
@@ -82,8 +108,8 @@ export class GoalService {
    * exist. Telling the two apart would answer "does this id exist somewhere"
    * for anyone who cared to ask.
    */
-  get(actor: Actor, id: string): GoalDTO {
-    return toDto(this.stored(actor, id));
+  async get(actor: Actor, id: string): Promise<GoalRecord> {
+    return toDto(await this.stored(actor, id));
   }
 
   /**
@@ -93,21 +119,41 @@ export class GoalService {
    * not a thing anyone does, and a caller able to choose could record one
    * completed before any work existed.
    */
-  create(actor: Actor, input: CreateGoalDTO): GoalDTO {
-    this.requireIdeas(actor, input.inspiredBy);
+  async create(actor: Actor, input: CreateGoalDTO): Promise<GoalRecord> {
+    await this.requireIdeas(actor, input.inspiredBy);
 
     const now = new Date().toISOString();
 
-    const goal: StoredGoal = {
-      id: randomUUID(),
-      organizationId: actor.organizationId,
-      status: 'ACTIVE',
-      ...input,
-      createdAt: now,
-      updatedAt: now,
-    };
+    const goal = await this.goals.save(
+      this.goals.create({
+        id: randomUUID(),
+        organizationId: actor.organizationId,
+        /*
+         * `ACTIVE`, not `PLANNED`. Setting a goal is committing to it — you are
+         * aiming at it from the moment you write it down, and starting every one
+         * as planned would mean a second action before anything counts as being
+         * worked on. `PLANNED` is for a goal deliberately parked, which is a
+         * thing someone does on purpose rather than a state to default into.
+         */
+        status: 'ACTIVE',
+        // Nothing has happened yet, and the caller cannot say otherwise: a goal
+        // set at 80% is a claim about work that does not exist.
+        progress: 0,
+        title: input.title,
+        description: input.description ?? null,
+        startsAt: input.startsAt ?? null,
+        targetAt: input.targetAt ?? null,
+        priority: input.priority ?? null,
+        inspiredBy: input.inspiredBy,
+        involves: input.involves,
+        sources: input.sources,
+        scheduled: input.scheduled,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
 
-    this.goals.push(goal);
+    await this.announce(GOAL_CREATED, 'aether:ResourceCreated', goal, actor);
 
     return toDto(goal);
   }
@@ -120,14 +166,18 @@ export class GoalService {
    * the change has been merged with what is stored — so a schema doing this
    * would either reject valid changes or pass invalid ones.
    */
-  update(actor: Actor, id: string, changes: UpdateGoalDTO): GoalDTO {
-    const existing = this.stored(actor, id);
+  async update(
+    actor: Actor,
+    id: string,
+    changes: UpdateGoalDTO,
+  ): Promise<GoalRecord> {
+    const existing = await this.stored(actor, id);
 
     if (changes.inspiredBy) {
-      this.requireIdeas(actor, changes.inspiredBy);
+      await this.requireIdeas(actor, changes.inspiredBy);
     }
 
-    const updated: StoredGoal = {
+    const updated: GoalEntity = {
       ...existing,
       ...changes,
       /*
@@ -137,6 +187,7 @@ export class GoalService {
        */
       startsAt: merge(existing.startsAt, changes.startsAt),
       targetAt: merge(existing.targetAt, changes.targetAt),
+      priority: merge(existing.priority, changes.priority),
       updatedAt: new Date().toISOString(),
     };
 
@@ -156,26 +207,46 @@ export class GoalService {
       });
     }
 
-    this.goals[this.goals.indexOf(existing)] = updated;
+    await this.goals.save(updated);
+
+    await this.announce(GOAL_UPDATED, 'aether:ResourceUpdated', updated, actor);
 
     return toDto(updated);
   }
 
   /** Forgets a goal. Deleting one that is not here is a 404, not a shrug. */
-  remove(actor: Actor, id: string): void {
+  async remove(actor: Actor, id: string): Promise<void> {
     // `stored` for the side effect of throwing: deleting nothing and reporting
     // success would hide a caller working from a stale list.
-    const goal = this.stored(actor, id);
+    const goal = await this.stored(actor, id);
 
-    this.goals.splice(this.goals.indexOf(goal), 1);
+    await this.goals.remove({ ...goal });
+
+    await this.announce(GOAL_DELETED, 'aether:ResourceDeleted', goal, actor);
   }
 
-  private stored(actor: Actor, id: string): StoredGoal {
-    const goal = this.goals.find(
-      (candidate) =>
-        candidate.id === id &&
-        candidate.organizationId === actor.organizationId,
-    );
+  private announce(
+    routingKey: string,
+    type: AetherEventType,
+    goal: StoredGoal,
+    actor: Actor,
+  ): Promise<void> {
+    return announce(this.events, this.logger, {
+      routingKey,
+      type,
+      subject: goalIri(goal.id),
+      organizationId: goal.organizationId,
+      actor,
+      document: toGoalDocument(toDto(goal)),
+    });
+  }
+
+  private async stored(actor: Actor, id: string): Promise<GoalEntity> {
+    // The tenant is part of the lookup, not a check after it.
+    const goal = await this.goals.findOneBy({
+      id,
+      organizationId: actor.organizationId,
+    });
 
     if (!goal) {
       throw new NotFoundException(`No goal with id ${id}.`);
@@ -186,10 +257,9 @@ export class GoalService {
 }
 
 /** `undefined` keeps what is there; `null` clears it. */
-const merge = (
-  current: string | undefined,
-  change: string | null | undefined,
-): string | undefined => (change === undefined ? current : (change ?? undefined));
+/** `undefined` keeps what is there; `null` clears it. */
+const merge = <T>(current: T | null, change: T | null | undefined): T | null =>
+  change === undefined ? current : change;
 
 /**
  * A goal as held here: the DTO plus the tenant it belongs to.
@@ -198,9 +268,32 @@ const merge = (
  * route that can reach the record, so returning it would restate what the
  * caller already said.
  */
-type StoredGoal = GoalDTO & { organizationId: string };
+/**
+ * A goal as this service deals in it: everything but `realizedBy`.
+ *
+ * That field is the projects naming this goal, which only `ProjectService`
+ * knows — so it is composed at the controller rather than invented here.
+ * Leaving it off the type is what stops this service quietly returning an
+ * empty list that reads as "nothing is being done about it".
+ */
+export type GoalRecord = Omit<GoalDTO, 'realizedBy'>;
 
-const toDto = ({
-  organizationId: _organizationId,
-  ...goal
-}: StoredGoal): GoalDTO => goal;
+type StoredGoal = GoalEntity;
+
+/** A row as the api answers with it: tenant dropped, `null` becomes absent. */
+const toDto = (goal: GoalEntity): GoalRecord => ({
+  id: goal.id,
+  title: goal.title,
+  ...(goal.description === null ? {} : { description: goal.description }),
+  status: goal.status,
+  ...(goal.startsAt === null ? {} : { startsAt: goal.startsAt }),
+  ...(goal.targetAt === null ? {} : { targetAt: goal.targetAt }),
+  ...(goal.priority === null ? {} : { priority: goal.priority }),
+  progress: goal.progress,
+  inspiredBy: goal.inspiredBy,
+  involves: goal.involves,
+  sources: goal.sources,
+  scheduled: goal.scheduled,
+  createdAt: goal.createdAt,
+  updatedAt: goal.updatedAt,
+});

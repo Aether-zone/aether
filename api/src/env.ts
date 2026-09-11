@@ -53,6 +53,27 @@ export const envSchema = baseEnvSchema.extend({
    * still gets created when the broker is down, with the failure logged.
    */
   RABBITMQ_CONNECT_TIMEOUT_MS: z.coerce.number().int().min(0).default(0),
+
+  /*
+   * The database.
+   *
+   * SQLite, in a file beside the process. It is a real store rather than the
+   * arrays these services used to hold — records survive a restart and two
+   * requests see the same data — and it is the right size for a workspace
+   * where every service runs on one machine. The day aether needs more than
+   * one instance, this is the line that changes.
+   */
+  DATABASE_PATH: z.string().min(1).default('./aether.sqlite'),
+
+  /**
+   * Let TypeORM create and alter tables to match the entities.
+   *
+   * On by default outside production, which is what makes a checkout runnable
+   * without a migration step. **It is not a migration strategy**: it drops
+   * columns whose entity fields disappear, taking their data with them. When
+   * aether has data anyone would miss, this goes off and migrations go in.
+   */
+  DATABASE_SYNCHRONIZE: z.coerce.boolean().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

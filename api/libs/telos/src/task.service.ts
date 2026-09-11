@@ -1,16 +1,29 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'node:crypto';
+import { Not, Repository } from 'typeorm';
 
 import {
   CLOSED_STATUSES,
+  TASK_CREATED,
+  TASK_DELETED,
+  TASK_UPDATED,
   type CreateTaskDTO,
   type TaskDTO,
   type TaskStatus,
   type UpdateTaskDTO,
 } from '@aether/contract';
-import type { Actor } from '@aether-zone/organon';
+import {
+  EventPublisher,
+  type Actor,
+  type AetherEventType,
+} from '@aether-zone/organon';
 
+import { announce } from '@aether/events';
+
+import { TaskEntity } from './task.entity';
 import { ProjectService } from './project.service';
+import { taskIri, toTaskDocument } from './telos.json-ld';
 
 /**
  * The tasks telos is holding.
@@ -29,15 +42,23 @@ import { ProjectService } from './project.service';
  */
 @Injectable()
 export class TaskService {
-  private readonly tasks: StoredTask[] = [];
+  private readonly logger = new Logger(TaskService.name);
 
-  constructor(private readonly projects: ProjectService) {}
+  constructor(
+    @InjectRepository(TaskEntity)
+    private readonly tasks: Repository<TaskEntity>,
+    private readonly projects: ProjectService,
+    private readonly events: EventPublisher,
+  ) {}
 
   /** Every task in this organization, oldest first. */
-  list(actor: Actor): TaskDTO[] {
-    return this.tasks
-      .filter((task) => task.organizationId === actor.organizationId)
-      .map(toDto);
+  async list(actor: Actor): Promise<TaskDTO[]> {
+    const rows = await this.tasks.find({
+      where: { organizationId: actor.organizationId },
+      order: { createdAt: 'ASC' },
+    });
+
+    return rows.map(toDto);
   }
 
   /**
@@ -47,19 +68,46 @@ export class TaskService {
    * exist. Telling the two apart would answer "does this id exist somewhere"
    * for anyone who cared to ask.
    */
-  get(actor: Actor, id: string): TaskDTO {
-    return toDto(this.stored(actor, id));
+  async get(actor: Actor, id: string): Promise<TaskDTO> {
+    return toDto(await this.stored(actor, id));
   }
 
   /** The ids of the tasks filed under a project, oldest first. */
-  idsInProject(actor: Actor, projectId: string): string[] {
-    return this.tasks
-      .filter(
-        (task) =>
-          task.organizationId === actor.organizationId &&
-          task.projectId === projectId,
-      )
-      .map((task) => task.id);
+  async idsInProject(actor: Actor, projectId: string): Promise<string[]> {
+    const rows = await this.tasks.find({
+      where: { organizationId: actor.organizationId, projectId },
+      order: { createdAt: 'ASC' },
+      // Only the ids leave this method, so only the ids are read.
+      select: { id: true },
+    });
+
+    return rows.map((task) => task.id);
+  }
+
+  /**
+   * How many tasks a project has, and how many are finished.
+   *
+   * `DONE` counts as finished; `CANCELLED` does not count at all — it is work
+   * that turned out not to be needed, and leaving it in the denominator would
+   * make a project that dropped half its scope look permanently half-done.
+   */
+  async countsForProject(
+    actor: Actor,
+    projectId: string,
+  ): Promise<{ done: number; total: number }> {
+    /*
+     * Two counts rather than a fetch-and-filter: the rows themselves are never
+     * looked at, and a project with a thousand tasks would otherwise load a
+     * thousand rows to produce two numbers.
+     */
+    const scope = { organizationId: actor.organizationId, projectId };
+
+    const [total, done] = await Promise.all([
+      this.tasks.count({ where: { ...scope, status: Not('CANCELLED') } }),
+      this.tasks.count({ where: { ...scope, status: 'DONE' } }),
+    ]);
+
+    return { done, total };
   }
 
   /**
@@ -68,23 +116,30 @@ export class TaskService {
    * Every task begins `TODO`: writing one down is not doing it, and a caller
    * able to choose could record work as finished that was never started.
    */
-  create(actor: Actor, input: CreateTaskDTO): TaskDTO {
+  async create(actor: Actor, input: CreateTaskDTO): Promise<TaskDTO> {
     if (input.projectId) {
-      this.requireProject(actor, input.projectId);
+      await this.requireProject(actor, input.projectId);
     }
 
     const now = new Date().toISOString();
 
-    const task: StoredTask = {
-      id: randomUUID(),
-      organizationId: actor.organizationId,
-      status: 'TODO',
-      ...input,
-      createdAt: now,
-      updatedAt: now,
-    };
+    const task = await this.tasks.save(
+      this.tasks.create({
+        id: randomUUID(),
+        organizationId: actor.organizationId,
+        status: 'TODO',
+        title: input.title,
+        description: input.description ?? null,
+        priority: input.priority ?? null,
+        projectId: input.projectId ?? null,
+        dueAt: input.dueAt ?? null,
+        closedAt: null,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
 
-    this.tasks.push(task);
+    await this.announce(TASK_CREATED, 'aether:ResourceCreated', task, actor);
 
     return toDto(task);
   }
@@ -98,17 +153,21 @@ export class TaskService {
    * across later edits to a task that is still closed, and cleared when one
    * reopens.
    */
-  update(actor: Actor, id: string, changes: UpdateTaskDTO): TaskDTO {
-    const existing = this.stored(actor, id);
+  async update(
+    actor: Actor,
+    id: string,
+    changes: UpdateTaskDTO,
+  ): Promise<TaskDTO> {
+    const existing = await this.stored(actor, id);
 
     if (changes.projectId) {
-      this.requireProject(actor, changes.projectId);
+      await this.requireProject(actor, changes.projectId);
     }
 
     const status = changes.status ?? existing.status;
     const now = new Date().toISOString();
 
-    const updated: StoredTask = {
+    const updated: TaskEntity = {
       ...existing,
       ...changes,
       /*
@@ -124,18 +183,38 @@ export class TaskService {
       updatedAt: now,
     };
 
-    this.tasks[this.tasks.indexOf(existing)] = updated;
+    await this.tasks.save(updated);
+
+    await this.announce(TASK_UPDATED, 'aether:ResourceUpdated', updated, actor);
 
     return toDto(updated);
   }
 
   /** Forgets a task. Deleting one that is not here is a 404, not a shrug. */
-  remove(actor: Actor, id: string): void {
+  async remove(actor: Actor, id: string): Promise<void> {
     // `stored` for the side effect of throwing: deleting nothing and reporting
     // success would hide a caller working from a stale list.
-    const task = this.stored(actor, id);
+    const task = await this.stored(actor, id);
 
-    this.tasks.splice(this.tasks.indexOf(task), 1);
+    await this.tasks.remove({ ...task });
+
+    await this.announce(TASK_DELETED, 'aether:ResourceDeleted', task, actor);
+  }
+
+  private announce(
+    routingKey: string,
+    type: AetherEventType,
+    task: StoredTask,
+    actor: Actor,
+  ): Promise<void> {
+    return announce(this.events, this.logger, {
+      routingKey,
+      type,
+      subject: taskIri(task.id),
+      organizationId: task.organizationId,
+      actor,
+      document: toTaskDocument(toDto(task)),
+    });
   }
 
   /**
@@ -145,16 +224,16 @@ export class TaskService {
    * up as a task filed under a project that cannot be opened, with no way to
    * tell whether the project was deleted or never existed.
    */
-  private requireProject(actor: Actor, projectId: string): void {
-    this.projects.get(actor, projectId);
+  private async requireProject(actor: Actor, projectId: string): Promise<void> {
+    await this.projects.get(actor, projectId);
   }
 
-  private stored(actor: Actor, id: string): StoredTask {
-    const task = this.tasks.find(
-      (candidate) =>
-        candidate.id === id &&
-        candidate.organizationId === actor.organizationId,
-    );
+  private async stored(actor: Actor, id: string): Promise<TaskEntity> {
+    // The tenant is part of the lookup, not a check after it.
+    const task = await this.tasks.findOneBy({
+      id,
+      organizationId: actor.organizationId,
+    });
 
     if (!task) {
       throw new NotFoundException(`No task with id ${id}.`);
@@ -175,22 +254,21 @@ const isClosed = (status: TaskStatus): boolean =>
  * it.
  */
 const closingTime = (
-  existing: StoredTask,
+  existing: TaskEntity,
   status: TaskStatus,
   now: string,
-): string | undefined => {
+): string | null => {
   if (!isClosed(status)) {
-    return undefined;
+    return null;
   }
 
   return existing.closedAt ?? now;
 };
 
 /** `undefined` keeps what is there; `null` clears it. */
-const merge = <T>(
-  current: T | undefined,
-  change: T | null | undefined,
-): T | undefined => (change === undefined ? current : (change ?? undefined));
+/** `undefined` keeps what is there; `null` clears it. */
+const merge = <T>(current: T | null, change: T | null | undefined): T | null =>
+  change === undefined ? current : change;
 
 /**
  * A task as held here: the DTO plus the tenant it belongs to.
@@ -199,9 +277,18 @@ const merge = <T>(
  * route that can reach the record, so returning it would restate what the
  * caller already said.
  */
-type StoredTask = TaskDTO & { organizationId: string };
+type StoredTask = TaskEntity;
 
-const toDto = ({
-  organizationId: _organizationId,
-  ...task
-}: StoredTask): TaskDTO => task;
+/** A row as the api answers with it: tenant dropped, `null` becomes absent. */
+const toDto = (task: TaskEntity): TaskDTO => ({
+  id: task.id,
+  title: task.title,
+  ...(task.description === null ? {} : { description: task.description }),
+  status: task.status,
+  ...(task.priority === null ? {} : { priority: task.priority }),
+  ...(task.projectId === null ? {} : { projectId: task.projectId }),
+  ...(task.dueAt === null ? {} : { dueAt: task.dueAt }),
+  ...(task.closedAt === null ? {} : { closedAt: task.closedAt }),
+  createdAt: task.createdAt,
+  updatedAt: task.updatedAt,
+});

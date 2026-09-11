@@ -14,6 +14,7 @@ import { TekmerionModule } from '@aether/tekmerion';
 import { TelosModule } from '@aether/telos';
 import { ToposModule } from '@aether/topos';
 
+import { DatabaseModule } from './database.module';
 import { envSchema, type Env } from './env';
 
 /**
@@ -30,8 +31,9 @@ import { envSchema, type Env } from './env';
  * internals does not typecheck. Six directories under `src/` would have made
  * that same coupling invisible.
  *
- * Each is empty today — the console's screens for them are placeholders — so
- * what they carry is the seam and the list of resources the domain owns.
+ * Each library owns its own tables. `DatabaseModule` opens the one connection
+ * and every domain asks for what it needs through `TypeOrmModule.forFeature`,
+ * so a domain cannot obtain a repository for a table it does not own.
  */
 @Module({
   imports: [
@@ -87,6 +89,7 @@ import { envSchema, type Env } from './env';
      * gets reviewed once rather than six times, and so a module that starts
      * providing something is reachable the moment it does.
      */
+    DatabaseModule,
     ChronosModule,
     OikonomosModule,
     ProsoponeModule,
