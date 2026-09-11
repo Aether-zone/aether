@@ -15,6 +15,7 @@ const valid = {
   updatedAt: '2026-01-01T09:00:00.000Z',
   createdBy: '22222222-2222-4222-8222-222222222222',
   inspired: [],
+  involves: [],
 };
 
 describe('an idea', () => {
@@ -100,8 +101,11 @@ describe('priority', () => {
 
 describe('capturing one', () => {
   it('needs only a title', () => {
+    // `involves` comes back as the empty list its default supplies, which is
+    // the value the record carries rather than something to fill in later.
     expect(createIdeaSchema.parse({ title: 'A thought' })).toEqual({
       title: 'A thought',
+      involves: [],
     });
   });
 
@@ -118,7 +122,7 @@ describe('capturing one', () => {
       createdAt: '2020-01-01T00:00:00.000Z',
     });
 
-    expect(parsed).toEqual({ title: 'A thought' });
+    expect(parsed).toEqual({ title: 'A thought', involves: [] });
   });
 
   it('still validates the priority it is given', () => {
@@ -212,5 +216,69 @@ describe('taking a description back', () => {
       updateIdeaSchema.safeParse({ description: 'x'.repeat(DESCRIPTION_MAX + 1) })
         .success,
     ).toBe(false);
+  });
+});
+
+describe('who an idea is about', () => {
+  const ALICE = '55555555-5555-4555-8555-555555555555';
+  const BOB = '66666666-6666-4666-8666-666666666666';
+
+  it('records the people involved, by id', () => {
+    const idea = ideaSchema.parse({ ...valid, involves: [ALICE, BOB] });
+
+    expect(idea.involves).toEqual([ALICE, BOB]);
+  });
+
+  it('is required on the record, so "nobody" and "unsaid" stay distinct', () => {
+    /*
+     * An empty array says "nobody in particular"; a missing one would only say
+     * the caller forgot, and the two need telling apart on a screen that lists
+     * who is involved.
+     */
+    const { involves: _omitted, ...without } = valid;
+
+    expect(ideaSchema.safeParse(without).success).toBe(false);
+    expect(ideaSchema.parse(valid).involves).toEqual([]);
+  });
+
+  it('refuses anything that is not a person id', () => {
+    // A name here would be a copy that goes stale the day someone marries.
+    expect(
+      ideaSchema.safeParse({ ...valid, involves: ['Alice'] }).success,
+    ).toBe(false);
+  });
+
+  it('can be set at capture, unlike `inspired`', () => {
+    /*
+     * Who an idea is about is often the reason it was worth writing down,
+     * where what it inspired cannot exist yet.
+     */
+    const created = createIdeaSchema.parse({
+      title: 'Ask Alice about the console',
+      involves: [ALICE],
+    });
+
+    expect(created.involves).toEqual([ALICE]);
+  });
+
+  it('defaults to empty, so a title alone is still a whole idea', () => {
+    expect(createIdeaSchema.parse({ title: 'A thought' }).involves).toEqual([]);
+  });
+
+  it('is replaced as a whole set on update', () => {
+    // No "add one person": a caller that sends the list it means cannot
+    // accidentally append to one it had not read.
+    expect(updateIdeaSchema.parse({ involves: [BOB] }).involves).toEqual([BOB]);
+  });
+
+  it('takes an empty list to mean everyone is removed', () => {
+    // Which is why it is not nullable — `[]` already says it.
+    expect(updateIdeaSchema.parse({ involves: [] }).involves).toEqual([]);
+  });
+
+  it('leaves the people alone when the update does not mention them', () => {
+    expect(updateIdeaSchema.parse({ title: 'Renamed' })).not.toHaveProperty(
+      'involves',
+    );
   });
 });

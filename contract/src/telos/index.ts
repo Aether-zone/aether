@@ -1,3 +1,4 @@
+export * from './events.js';
 export * from './goal-status.js';
 export * from './goal.js';
 export * from './idea-status.js';

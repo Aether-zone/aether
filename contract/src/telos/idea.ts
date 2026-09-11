@@ -71,6 +71,30 @@ export const ideaSchema = z.object({
    * array says that where a missing one would only say the caller forgot.
    */
   inspired: z.array(z.uuid()),
+
+  /**
+   * The people this idea is about, by id — prosopone person ids.
+   *
+   * **Stored here, unlike `inspired`.** The two look alike and are opposites:
+   * a goal states what inspired it, so an idea can read that back, but a
+   * person has no field naming the ideas they are in. Nobody else holds this
+   * fact, so this end owns it — and unlike the goal link, the ownership is not
+   * a choice between two ends but the only end there is.
+   *
+   * Ids rather than whole people, and here the reason is not recursion but
+   * staleness: a person's name and number change, and a copy taken when the
+   * idea was captured would go on asserting the old ones. The id is the part
+   * that does not change.
+   *
+   * Not checked against prosopone by this schema. A DTO cannot ask whether a
+   * person exists — only the api can, and whether it should is a separate
+   * decision from what the shape is.
+   *
+   * Always present, possibly empty. Most ideas are about nobody in
+   * particular, and an empty array says that where a missing one would only
+   * say the caller forgot.
+   */
+  involves: z.array(z.uuid()),
 });
 
 /**
@@ -90,6 +114,15 @@ export const createIdeaSchema = ideaSchema.omit({
   // Derived from the goals that name this idea, so there is nothing to send
   // and nothing that could be sent wrongly.
   inspired: true,
+}).extend({
+  /*
+   * Settable at capture, unlike `inspired`: who an idea is about is often the
+   * reason it was worth writing down. Defaulted, so a title alone is still a
+   * whole idea — `.default([])` rather than `.optional()` because the parsed
+   * value should be the empty list the record carries, not `undefined` for the
+   * service to remember to fill in.
+   */
+  involves: z.array(z.uuid()).default([]),
 });
 
 /**
@@ -109,6 +142,14 @@ export const updateIdeaSchema = createIdeaSchema.partial().extend({
    */
   description: z.string().trim().max(DESCRIPTION_MAX).nullable().optional(),
   priority: prioritySchema.nullable().optional(),
+  /*
+   * The whole set, replaced. There is no "add one person" here on purpose: a
+   * partial update of a list needs to say which operation it is, and a caller
+   * that sends the list it means cannot accidentally append to one it had not
+   * read. Sending `[]` removes everyone, which is why this is not nullable —
+   * the empty array already says it.
+   */
+  involves: z.array(z.uuid()).optional(),
 });
 
 export type IdeaDTO = z.infer<typeof ideaSchema>;

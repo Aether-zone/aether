@@ -8,6 +8,11 @@ const valid = {
   startsAt: '2026-01-01T09:00:00.000Z',
   targetAt: '2026-03-31T23:59:00.000Z',
   inspiredBy: [],
+  progress: 0,
+  involves: [],
+  realizedBy: [],
+  sources: [],
+  scheduled: [],
   createdAt: '2025-12-01T09:00:00.000Z',
   updatedAt: '2025-12-01T09:00:00.000Z',
 };
@@ -27,15 +32,24 @@ describe('a goal', () => {
     expect(goalSchema.safeParse({ ...valid, title: '  ' }).success).toBe(false);
   });
 
-  it('has exactly the three outcomes', () => {
-    for (const status of ['ACTIVE', 'COMPLETED', 'ABANDONED']) {
+  it('knows the four states, and nothing else', () => {
+    for (const status of ['PLANNED', 'ACTIVE', 'COMPLETED', 'ABANDONED']) {
       expect(goalSchema.safeParse({ ...valid, status }).success).toBe(true);
     }
 
-    // No "not started": a goal you have not begun is still one you are aiming
-    // at, and the dates say how long it has sat better than a state would.
     expect(goalSchema.safeParse({ ...valid, status: 'PENDING' }).success).toBe(
       false,
+    );
+  });
+
+  it('separates what is planned from what is live', () => {
+    /*
+     * The distinction a board is read for: "what am I working on" and "what
+     * have I merely agreed to" are two different piles, and the dates cannot
+     * tell them apart — a goal can be scheduled and untouched at once.
+     */
+    expect(goalSchema.parse({ ...valid, status: 'PLANNED' }).status).toBe(
+      'PLANNED',
     );
   });
 
@@ -94,9 +108,14 @@ describe('setting one', () => {
   it('needs only a title', () => {
     // `inspiredBy` comes back defaulted, which is the point of defaulting it:
     // a caller that named no ideas still gets a well-formed list.
+    // Both list fields come back defaulted, which is the point of defaulting
+    // them: a caller that named nobody still gets well-formed lists.
     expect(createGoalSchema.parse({ title: 'Ship it' })).toEqual({
       title: 'Ship it',
       inspiredBy: [],
+      involves: [],
+      sources: [],
+      scheduled: [],
     });
   });
 
@@ -113,7 +132,13 @@ describe('setting one', () => {
       createdAt: '2020-01-01T00:00:00.000Z',
     });
 
-    expect(parsed).toEqual({ title: 'Ship it', inspiredBy: [] });
+    expect(parsed).toEqual({
+      title: 'Ship it',
+      inspiredBy: [],
+      involves: [],
+      sources: [],
+      scheduled: [],
+    });
   });
 
   it('still refuses a target before the start', () => {
@@ -202,5 +227,139 @@ describe('what inspired a goal', () => {
     expect(
       goalSchema.safeParse({ ...valid, inspiredBy: ['not-an-id'] }).success,
     ).toBe(false);
+  });
+});
+
+describe('how far along', () => {
+  it('starts at nothing and is always stated', () => {
+    /*
+     * Required rather than optional: a board with no sense of movement is a
+     * list of intentions, and an absent progress would render as an empty bar
+     * that might mean "none" or might mean "nobody said".
+     */
+    expect(goalSchema.parse(valid).progress).toBe(0);
+
+    const { progress: _omitted, ...without } = valid;
+
+    expect(goalSchema.safeParse(without).success).toBe(false);
+  });
+
+  it('is a percentage, and refuses to be outside one', () => {
+    expect(goalSchema.parse({ ...valid, progress: 100 }).progress).toBe(100);
+    expect(goalSchema.safeParse({ ...valid, progress: 101 }).success).toBe(
+      false,
+    );
+    expect(goalSchema.safeParse({ ...valid, progress: -1 }).success).toBe(false);
+  });
+
+  it('refuses decimals, which claim a precision an estimate has not', () => {
+    expect(goalSchema.safeParse({ ...valid, progress: 42.5 }).success).toBe(
+      false,
+    );
+  });
+
+  it('is not the caller’s to set when the goal is created', () => {
+    // Nothing has happened yet; a goal set at 80% is a claim about work that
+    // does not exist.
+    expect(
+      createGoalSchema.parse({ title: 'Ship it', progress: 80 }),
+    ).not.toHaveProperty('progress');
+  });
+
+  it('can be moved afterwards', () => {
+    expect(updateGoalSchema.parse({ progress: 40 }).progress).toBe(40);
+  });
+});
+
+describe('who a goal is about', () => {
+  const ALICE = '55555555-5555-4555-8555-555555555555';
+
+  it('records them, the same way an idea does', () => {
+    // "Help Alice find a job" is Alice's goal as much as anyone's.
+    expect(goalSchema.parse({ ...valid, involves: [ALICE] }).involves).toEqual([
+      ALICE,
+    ]);
+  });
+
+  it('can be set when the goal is', () => {
+    expect(
+      createGoalSchema.parse({ title: 'Help Alice', involves: [ALICE] })
+        .involves,
+    ).toEqual([ALICE]);
+  });
+
+  it('is replaced as a whole set on update', () => {
+    expect(updateGoalSchema.parse({ involves: [] }).involves).toEqual([]);
+  });
+});
+
+describe('how much a goal matters', () => {
+  it('uses the one scale telos ranks everything by', () => {
+    expect(goalSchema.parse({ ...valid, priority: 1 }).priority).toBe(1);
+    expect(goalSchema.safeParse({ ...valid, priority: 6 }).success).toBe(false);
+  });
+
+  it('is optional, because an unranked goal is the normal case', () => {
+    expect(goalSchema.parse(valid).priority).toBeUndefined();
+  });
+
+  it('can be un-ranked with null', () => {
+    expect(updateGoalSchema.parse({ priority: null }).priority).toBeNull();
+  });
+});
+
+describe('what a goal draws on', () => {
+  const RESOURCE = '99999999-9999-4999-8999-999999999999';
+  const EVENT = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+
+  it('cites its sources', () => {
+    /*
+     * Owned by the goal, unlike the projects realizing it. A project is
+     * started *for* a goal and knows it; a document does not know what it will
+     * end up justifying, so the reader of the goal is who decides.
+     */
+    expect(goalSchema.parse({ ...valid, sources: [RESOURCE] }).sources).toEqual(
+      [RESOURCE],
+    );
+  });
+
+  it('records what has been booked for it', () => {
+    expect(
+      goalSchema.parse({ ...valid, scheduled: [EVENT] }).scheduled,
+    ).toEqual([EVENT]);
+  });
+
+  it('has both lists always, so "none" and "unsaid" stay distinct', () => {
+    const { sources: _s, scheduled: _sc, ...without } = valid;
+
+    expect(goalSchema.safeParse(without).success).toBe(false);
+    expect(goalSchema.parse(valid).sources).toEqual([]);
+  });
+
+  it('replaces each as a whole set on update', () => {
+    expect(
+      updateGoalSchema.parse({ sources: [RESOURCE], scheduled: [] }),
+    ).toEqual({ sources: [RESOURCE], scheduled: [] });
+  });
+
+  it('reads the projects realizing it, but cannot be told them', () => {
+    /*
+     * Derived from `Project.pursues`, so the two directions can never
+     * disagree — the same arrangement an idea has with its goals. A caller
+     * that could send it could claim a goal was being worked on by a project
+     * that has never heard of it.
+     */
+    const project = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+
+    expect(
+      goalSchema.parse({ ...valid, realizedBy: [project] }).realizedBy,
+    ).toEqual([project]);
+
+    expect(
+      createGoalSchema.parse({ title: 'Ship it', realizedBy: [project] }),
+    ).not.toHaveProperty('realizedBy');
+    expect(
+      updateGoalSchema.parse({ realizedBy: [project] }),
+    ).not.toHaveProperty('realizedBy');
   });
 });

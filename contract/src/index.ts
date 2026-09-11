@@ -12,5 +12,6 @@
  */
 export * from './chronos/index.js';
 export * from './prosopone/index.js';
+export * from './tekmerion/index.js';
 export * from './telos/index.js';
 export * from './topos/index.js';
