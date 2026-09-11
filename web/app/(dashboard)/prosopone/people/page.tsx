@@ -4,6 +4,8 @@ import { listUsers } from '@/lib/users';
 
 import { PeopleView } from './people-view';
 
+import { PageBreadcrumbs } from '@/components/page-breadcrumbs';
+
 export const metadata = { title: 'People — Aether' };
 
 /**
@@ -21,6 +23,8 @@ export default async function PeoplePage() {
 
   return (
     <div className="flex flex-col gap-6">
+      <PageBreadcrumbs />
+
       <div className="flex flex-col gap-2">
         <Heading level={1} size="heading-large">
           Prosopone &gt; People

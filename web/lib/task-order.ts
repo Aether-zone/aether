@@ -73,7 +73,48 @@ export function formatDue(dueAt: string | undefined): string | null {
   );
 }
 
+/**
+ * "Today", "in 3d", "2d ago", or nothing at all.
+ *
+ * Compact because it sits at the end of a dense row, where the full phrase —
+ * "in 3 days" — pushes the title into truncating for information the reader
+ * gets from three characters. "Today" stays a word: it is the one value that
+ * changes what somebody does next, and it should not look like the others.
+ */
+export function formatDueShort(dueAt: string | undefined): string | null {
+  if (!dueAt) {
+    return null;
+  }
+
+  const due = new Date(dueAt);
+
+  if (Number.isNaN(due.getTime())) {
+    return null;
+  }
+
+  /*
+   * Compared as calendar days in the reader's own zone, not as elapsed hours.
+   * "Due today" means the day, and something due at 09:00 is still due today
+   * at 17:00 — an hours-based difference would call it "1d ago" after
+   * lunchtime.
+   */
+  const startOfDay = (at: Date) =>
+    new Date(at.getFullYear(), at.getMonth(), at.getDate()).getTime();
+
+  const days = Math.round(
+    (startOfDay(due) - startOfDay(new Date())) / (1000 * 60 * 60 * 24),
+  );
+
+  if (days === 0) {
+    return 'Today';
+  }
+
+  return days > 0 ? `in ${days}d` : `${Math.abs(days)}d ago`;
+}
+
 /** Whether a deadline has passed on something still open. */
 export function isOverdue(task: TaskDTO): boolean {
-  return !isClosed(task) && !!task.dueAt && task.dueAt < new Date().toISOString();
+  return (
+    !isClosed(task) && !!task.dueAt && task.dueAt < new Date().toISOString()
+  );
 }

@@ -19,6 +19,8 @@ import type { ApiFailure } from '@/lib/api';
 import { listEvents } from '@/lib/events';
 import { formatWhen } from '@/lib/when';
 
+import { PageBreadcrumbs } from '@/components/page-breadcrumbs';
+
 export const metadata = { title: 'Chronos > Events — Aether' };
 
 const EXPLANATIONS: Record<ApiFailure['reason'], string> = {
@@ -44,13 +46,15 @@ const KINDS: Record<EventType, string> = {
 };
 
 /** Only a status worth interrupting the reader for gets a colour. */
-const STATUS_VARIANTS: Record<EventStatus, 'secondary' | 'warning' | 'destructive'> =
-  {
-    SCHEDULED: 'secondary',
-    IN_PROGRESS: 'warning',
-    COMPLETED: 'secondary',
-    CANCELLED: 'destructive',
-  };
+const STATUS_VARIANTS: Record<
+  EventStatus,
+  'secondary' | 'warning' | 'destructive'
+> = {
+  SCHEDULED: 'secondary',
+  IN_PROGRESS: 'warning',
+  COMPLETED: 'secondary',
+  CANCELLED: 'destructive',
+};
 
 /**
  * The calendar, as a list.
@@ -66,6 +70,8 @@ export default async function EventsPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      <PageBreadcrumbs />
+
       <div className="flex flex-col gap-2">
         <Heading level={1} size="heading-large">
           Chronos &gt; Events
@@ -73,7 +79,9 @@ export default async function EventsPage() {
       </div>
 
       {failure && (
-        <Alert variant={failure === 'noOrganization' ? 'default' : 'destructive'}>
+        <Alert
+          variant={failure === 'noOrganization' ? 'default' : 'destructive'}
+        >
           <AlertDescription>{EXPLANATIONS[failure]}</AlertDescription>
         </Alert>
       )}

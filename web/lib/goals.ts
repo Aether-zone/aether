@@ -12,6 +12,10 @@ export function listGoals(): Promise<ApiResult<GoalDTO[]>> {
   return apiGet<GoalDTO[]>(GOALS);
 }
 
+export function getGoal(id: string): Promise<ApiResult<GoalDTO>> {
+  return apiGet<GoalDTO>(`${GOALS}/${encodeURIComponent(id)}`);
+}
+
 export function createGoal(goal: CreateGoalDTO): Promise<ApiResult<GoalDTO>> {
   return apiPost<GoalDTO>(GOALS, goal);
 }

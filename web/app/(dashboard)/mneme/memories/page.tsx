@@ -1,25 +1,26 @@
-import {
-    Heading,
-} from '@aether-zone/kosmos';
+import { Heading } from '@aether-zone/kosmos';
 
 import { getSession } from '@/lib/auth';
 
+import { PageBreadcrumbs } from '@/components/page-breadcrumbs';
+
 export default async function MemoriesPage() {
+  const session = await getSession();
 
-    const session = await getSession()
+  // The layout has already redirected anyone without one; this is for the type.
+  if (!session) {
+    return null;
+  }
 
-    // The layout has already redirected anyone without one; this is for the type.
-    if (!session) {
-        return null;
-    }
+  return (
+    <div className="flex flex-col gap-6">
+      <PageBreadcrumbs />
 
-    return (
-        <div className="flex flex-col gap-6">
-            <div className="flex flex-col gap-2">
-                <Heading level={1} size="heading-large">
-                    Mneme &gt; Memories
-                </Heading>
-            </div>
-        </div>
-    );
+      <div className="flex flex-col gap-2">
+        <Heading level={1} size="heading-large">
+          Mneme &gt; Memories
+        </Heading>
+      </div>
+    </div>
+  );
 }

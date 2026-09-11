@@ -72,6 +72,11 @@ function fieldErrorsOf(error: {
 export async function addGoalAction(input: {
   title: string;
   targetAt: string;
+  description?: string;
+  /** The ideas this goal came from, when it was set from one of them. */
+  inspiredBy?: string[];
+  involves?: string[];
+  priority?: number;
 }): Promise<GoalFormResult> {
   const targetAt = input.targetAt.trim()
     ? toIsoInstant(`${input.targetAt.trim()}T23:59`)
@@ -84,6 +89,10 @@ export async function addGoalAction(input: {
   const parsed = createGoalSchema.safeParse({
     title: input.title,
     ...(targetAt ? { targetAt } : {}),
+    ...(input.description?.trim() ? { description: input.description } : {}),
+    ...(input.inspiredBy?.length ? { inspiredBy: input.inspiredBy } : {}),
+    ...(input.involves?.length ? { involves: input.involves } : {}),
+    ...(input.priority === undefined ? {} : { priority: input.priority }),
   });
 
   if (!parsed.success) {
@@ -97,6 +106,19 @@ export async function addGoalAction(input: {
   }
 
   revalidatePath(GOALS);
+
+  /*
+   * An idea's `inspired` is derived from the goals naming it, so setting a
+   * goal from an idea changes what that idea's page says without anything
+   * having written to the idea. Nothing else would know to refresh it.
+   */
+  for (const ideaId of input.inspiredBy ?? []) {
+    revalidatePath(`/telos/ideas/${ideaId}`);
+  }
+
+  if (input.inspiredBy?.length) {
+    revalidatePath('/telos/ideas');
+  }
 
   return {};
 }

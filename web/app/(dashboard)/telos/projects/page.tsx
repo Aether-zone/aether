@@ -2,9 +2,13 @@ import { Alert, AlertDescription, Heading, Text } from '@aether-zone/kosmos';
 
 import type { ApiFailure } from '@/lib/api';
 import { byProgress } from '@/lib/project-order';
+import { listGoals } from '@/lib/goals';
 import { listProjects } from '@/lib/projects';
+import { listUsers } from '@/lib/users';
 
 import { ProjectsView } from './projects-view';
+
+import { PageBreadcrumbs } from '@/components/page-breadcrumbs';
 
 export const metadata = { title: 'Telos > Projects — Aether' };
 
@@ -30,24 +34,34 @@ const EXPLANATIONS: Record<ApiFailure['reason'], string> = {
  * and what is next", which is the question this screen exists for.
  */
 export default async function ProjectsPage() {
-  const result = await listProjects();
+  // All three at once: a project names the goal it realizes and the people it
+  // is for, and the card needs their titles and names. None depends on the
+  // others.
+  const [result, goals, people] = await Promise.all([
+    listProjects(),
+    listGoals(),
+    listUsers(),
+  ]);
   const projects = result.ok ? [...result.data].sort(byProgress) : [];
   const failure = result.ok ? null : result.reason;
 
   return (
     <div className="flex flex-col gap-6">
+      <PageBreadcrumbs />
+
       <div className="flex flex-col gap-2">
         <Heading level={1} size="heading-large">
           Telos &gt; Projects
         </Heading>
         <Text tone="muted" size="body-small">
-          The step after a goal: the piece of work that pursues it, which tasks
-          then carry out.
+          Where goals turn into work with a beginning and an end.
         </Text>
       </div>
 
       {failure && (
-        <Alert variant={failure === 'noOrganization' ? 'default' : 'destructive'}>
+        <Alert
+          variant={failure === 'noOrganization' ? 'default' : 'destructive'}
+        >
           <AlertDescription>{EXPLANATIONS[failure]}</AlertDescription>
         </Alert>
       )}
@@ -55,7 +69,14 @@ export default async function ProjectsPage() {
       {/* Rendered even on failure: starting a project works the moment the api
           comes back, and hiding the screen would make an outage look like a
           lost feature. */}
-      <ProjectsView projects={projects} />
+      {/* A goals or people failure is quieter than a projects one: the card
+          falls back to no goal line and no avatars, which is a diminished
+          screen rather than a broken one. */}
+      <ProjectsView
+        projects={projects}
+        goals={goals.ok ? goals.data : []}
+        people={people.ok ? people.data : []}
+      />
     </div>
   );
 }

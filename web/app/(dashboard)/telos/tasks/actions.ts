@@ -8,6 +8,20 @@ import { createTask, deleteTask, updateTask } from '@/lib/tasks';
 
 const TASKS = '/telos/tasks';
 
+/**
+ * The task list, and every project page.
+ *
+ * A project's progress is counted from its tasks, so finishing one changes
+ * what its project says without anything having been written to the project.
+ * `'layout'` reaches `/telos/projects/[id]` for every id, which is what makes
+ * this correct when a task is *moved* between projects — the page it left is
+ * as stale as the one it joined, and only the id it joined is knowable here.
+ */
+function revalidateTasks(): void {
+  revalidatePath(TASKS);
+  revalidatePath('/telos/projects', 'layout');
+}
+
 export type TaskFormResult = {
   error?: string;
   fieldErrors?: Record<string, string>;
@@ -69,9 +83,7 @@ function fieldErrorsOf(error: {
  * through so the same action serves the quick-capture field and a task started
  * from a project's page.
  */
-export async function addTaskAction(
-  task: unknown,
-): Promise<TaskFormResult> {
+export async function addTaskAction(task: unknown): Promise<TaskFormResult> {
   const parsed = createTaskSchema.safeParse(task);
 
   if (!parsed.success) {
@@ -84,7 +96,7 @@ export async function addTaskAction(
     return toFormResult(result);
   }
 
-  revalidatePath(TASKS);
+  revalidateTasks();
 
   return {};
 }
@@ -113,7 +125,7 @@ export async function changeTaskAction(
     return toFormResult(result);
   }
 
-  revalidatePath(TASKS);
+  revalidateTasks();
 
   return {};
 }
@@ -125,7 +137,7 @@ export async function removeTaskAction(id: string): Promise<TaskFormResult> {
     return toFormResult(result);
   }
 
-  revalidatePath(TASKS);
+  revalidateTasks();
 
   return {};
 }

@@ -3,8 +3,11 @@ import { Alert, AlertDescription, Heading, Text } from '@aether-zone/kosmos';
 import type { ApiFailure } from '@/lib/api';
 import { byUrgency } from '@/lib/goal-order';
 import { listGoals } from '@/lib/goals';
+import { listUsers } from '@/lib/users';
 
 import { GoalsView } from './goals-view';
+
+import { PageBreadcrumbs } from '@/components/page-breadcrumbs';
 
 export const metadata = { title: 'Telos > Goals — Aether' };
 
@@ -30,24 +33,29 @@ const EXPLANATIONS: Record<ApiFailure['reason'], string> = {
  * closest" — which is the question this screen exists for.
  */
 export default async function GoalsPage() {
-  const result = await listGoals();
+  // Both at once: a goal names the people it is about, and the avatars need
+  // their names. They do not depend on each other.
+  const [result, people] = await Promise.all([listGoals(), listUsers()]);
   const goals = result.ok ? [...result.data].sort(byUrgency) : [];
   const failure = result.ok ? null : result.reason;
 
   return (
     <div className="flex flex-col gap-6">
+      <PageBreadcrumbs />
+
       <div className="flex flex-col gap-2">
         <Heading level={1} size="heading-large">
           Telos &gt; Goals
         </Heading>
         <Text tone="muted" size="body-small">
-          The step after an idea: something you have decided to reach, which
-          projects and tasks then work towards.
+          What you are trying to achieve, and how far along you are.
         </Text>
       </div>
 
       {failure && (
-        <Alert variant={failure === 'noOrganization' ? 'default' : 'destructive'}>
+        <Alert
+          variant={failure === 'noOrganization' ? 'default' : 'destructive'}
+        >
           <AlertDescription>{EXPLANATIONS[failure]}</AlertDescription>
         </Alert>
       )}
@@ -55,7 +63,7 @@ export default async function GoalsPage() {
       {/* Rendered even on failure: setting a goal works the moment the api
           comes back, and hiding the screen would make an outage look like a
           lost feature. */}
-      <GoalsView goals={goals} />
+      <GoalsView goals={goals} people={people.ok ? people.data : []} />
     </div>
   );
 }

@@ -5,6 +5,8 @@ import { listUsers } from '@/lib/users';
 
 import { EventForm } from '../event-form';
 
+import { PageBreadcrumbs } from '@/components/page-breadcrumbs';
+
 export const metadata = { title: 'Chronos > New event — Aether' };
 
 /**
@@ -24,6 +26,8 @@ export default async function NewEventPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      <PageBreadcrumbs />
+
       <div className="flex flex-col gap-2">
         <Heading level={1} size="heading-large">
           Chronos &gt; New event

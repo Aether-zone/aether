@@ -2,6 +2,8 @@ import { Heading, Text } from '@aether-zone/kosmos';
 
 import { PlaceForm } from '../place-form';
 
+import { PageBreadcrumbs } from '@/components/page-breadcrumbs';
+
 export const metadata = { title: 'Topos > New place — Aether' };
 
 /**
@@ -14,6 +16,8 @@ export const metadata = { title: 'Topos > New place — Aether' };
 export default function NewPlacePage() {
   return (
     <div className="flex flex-col gap-6">
+      <PageBreadcrumbs />
+
       <div className="flex flex-col gap-2">
         <Heading level={1} size="heading-large">
           Topos &gt; New place

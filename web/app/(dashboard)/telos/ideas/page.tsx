@@ -3,8 +3,11 @@ import { Alert, AlertDescription, Heading, Text } from '@aether-zone/kosmos';
 import type { ApiFailure } from '@/lib/api';
 import { byPriorityThenAge } from '@/lib/idea-order';
 import { listIdeas } from '@/lib/ideas';
+import { listUsers } from '@/lib/users';
 
 import { IdeasView } from './ideas-view';
+
+import { PageBreadcrumbs } from '@/components/page-breadcrumbs';
 
 export const metadata = { title: 'Telos > Ideas — Aether' };
 
@@ -31,24 +34,31 @@ const EXPLANATIONS: Record<ApiFailure['reason'], string> = {
  * "what order do people want to read this in" a question about the screen.
  */
 export default async function IdeasPage() {
-  const result = await listIdeas();
+  // Both at once: an idea names the people it involves, and the avatars need
+  // their names. They do not depend on each other, so running them in sequence
+  // would make the page wait twice.
+  const [result, people] = await Promise.all([listIdeas(), listUsers()]);
+
   const ideas = result.ok ? [...result.data].sort(byPriorityThenAge) : [];
   const failure = result.ok ? null : result.reason;
 
   return (
     <div className="flex flex-col gap-6">
+      <PageBreadcrumbs />
+
       <div className="flex flex-col gap-2">
         <Heading level={1} size="heading-large">
           Telos &gt; Ideas
         </Heading>
         <Text tone="muted" size="body-small">
-          The start of the chain: an idea becomes a goal, a goal is pursued by a
-          project, and a project is done through tasks.
+          Unrefined intent. Some become goals, most stay ideas — both are fine.
         </Text>
       </div>
 
       {failure && (
-        <Alert variant={failure === 'noOrganization' ? 'default' : 'destructive'}>
+        <Alert
+          variant={failure === 'noOrganization' ? 'default' : 'destructive'}
+        >
           <AlertDescription>{EXPLANATIONS[failure]}</AlertDescription>
         </Alert>
       )}
@@ -56,7 +66,10 @@ export default async function IdeasPage() {
       {/* The view is rendered even on failure: capture still works the moment
           the api comes back, and hiding the whole screen behind an error would
           make a transient outage look like a lost feature. */}
-      <IdeasView ideas={ideas} />
+      {/* A people failure is quieter than an ideas one: the avatars fall back
+          to nothing, which is a diminished screen rather than a broken one,
+          and saying so twice would bury the message that matters. */}
+      <IdeasView ideas={ideas} people={people.ok ? people.data : []} />
     </div>
   );
 }

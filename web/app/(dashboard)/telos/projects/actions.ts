@@ -72,6 +72,11 @@ function fieldErrorsOf(error: {
 export async function addProjectAction(input: {
   title: string;
   targetAt: string;
+  description?: string;
+  /** The goals this project is meant to reach, when started from one. */
+  pursues?: string[];
+  involves?: string[];
+  priority?: number;
 }): Promise<ProjectFormResult> {
   const targetAt = input.targetAt.trim()
     ? toIsoInstant(`${input.targetAt.trim()}T23:59`)
@@ -84,6 +89,10 @@ export async function addProjectAction(input: {
   const parsed = createProjectSchema.safeParse({
     title: input.title,
     ...(targetAt ? { targetAt } : {}),
+    ...(input.description?.trim() ? { description: input.description } : {}),
+    ...(input.pursues?.length ? { pursues: input.pursues } : {}),
+    ...(input.involves?.length ? { involves: input.involves } : {}),
+    ...(input.priority === undefined ? {} : { priority: input.priority }),
   });
 
   if (!parsed.success) {
@@ -97,6 +106,19 @@ export async function addProjectAction(input: {
   }
 
   revalidatePath(PROJECTS);
+
+  /*
+   * A goal's `realizedBy` is derived from the projects naming it, so starting
+   * a project from a goal changes what that goal's page says without anything
+   * having written to the goal. Nothing else would know to refresh it.
+   */
+  for (const goalId of input.pursues ?? []) {
+    revalidatePath(`/telos/goals/${goalId}`);
+  }
+
+  if (input.pursues?.length) {
+    revalidatePath('/telos/goals');
+  }
 
   return {};
 }
@@ -123,7 +145,9 @@ export async function changeProjectAction(
   return {};
 }
 
-export async function removeProjectAction(id: string): Promise<ProjectFormResult> {
+export async function removeProjectAction(
+  id: string,
+): Promise<ProjectFormResult> {
   const result = await deleteProject(id);
 
   if (!result.ok) {

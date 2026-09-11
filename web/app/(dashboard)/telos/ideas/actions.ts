@@ -75,9 +75,15 @@ function fieldErrorsOf(error: {
   return fieldErrors;
 }
 
-/** Writes one down. A title is the whole of what is required. */
-export async function addIdeaAction(title: string): Promise<IdeaFormResult> {
-  const parsed = createIdeaSchema.safeParse({ title });
+/**
+ * Captures one.
+ *
+ * Takes the whole shape rather than a title, because an idea can now name the
+ * people it involves — and `involves` has to survive the round trip from the
+ * dialog, not be rebuilt here from a string.
+ */
+export async function addIdeaAction(idea: unknown): Promise<IdeaFormResult> {
+  const parsed = createIdeaSchema.safeParse(idea);
 
   if (!parsed.success) {
     return { fieldErrors: fieldErrorsOf(parsed.error) };

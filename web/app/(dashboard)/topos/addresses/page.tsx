@@ -1,4 +1,12 @@
-import { Card, CardDescription, CardHeader, CardTitle, Heading } from '@aether-zone/kosmos';
+import {
+  Card,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  Heading,
+} from '@aether-zone/kosmos';
+
+import { PageBreadcrumbs } from '@/components/page-breadcrumbs';
 
 export const metadata = { title: 'Topos > Addresses — Aether' };
 
@@ -13,6 +21,8 @@ export const metadata = { title: 'Topos > Addresses — Aether' };
 export default function AddressesPage() {
   return (
     <div className="flex flex-col gap-6">
+      <PageBreadcrumbs />
+
       <div className="flex flex-col gap-2">
         <Heading level={1} size="heading-large">
           Topos &gt; Addresses
@@ -22,7 +32,11 @@ export default function AddressesPage() {
       <Card>
         <CardHeader>
           <CardTitle>Nothing here yet</CardTitle>
-          <CardDescription>An address is how post reaches a place. Separate from the place itself, because a place can move and an address can change without the other doing so.</CardDescription>
+          <CardDescription>
+            An address is how post reaches a place. Separate from the place
+            itself, because a place can move and an address can change without
+            the other doing so.
+          </CardDescription>
         </CardHeader>
       </Card>
     </div>

@@ -1,10 +1,11 @@
 import { Alert, AlertDescription } from '@aether-zone/kosmos';
-import type { GoalDTO } from '@aether/contract';
+import type { GoalDTO, UserDTO } from '@aether/contract';
 import { notFound } from 'next/navigation';
 
 import type { ApiFailure } from '@/lib/api';
 import { listGoals } from '@/lib/goals';
 import { getIdea } from '@/lib/ideas';
+import { listUsers } from '@/lib/users';
 
 import { IdeaDetail } from './idea-detail';
 
@@ -71,13 +72,21 @@ export default async function IdeaDetailPage({
 
   const idea = result.data;
 
-  // Only asked for when there is something to resolve.
-  const goals = idea.inspired.length > 0 ? await listGoals() : null;
+  // Goals only when there is something to resolve; people always, because the
+  // page can change who an idea is about and the picker needs everyone —
+  // including when it currently names nobody.
+  const [goals, people] = await Promise.all([
+    idea.inspired.length > 0 ? listGoals() : null,
+    listUsers(),
+  ]);
+
   const inspired: GoalDTO[] | null = goals?.ok
     ? idea.inspired
         .map((goalId) => goals.data.find((goal) => goal.id === goalId))
         .filter((goal): goal is GoalDTO => goal !== undefined)
     : null;
 
-  return <IdeaDetail idea={idea} inspired={inspired} />;
+  const everyone: UserDTO[] = people.ok ? people.data : [];
+
+  return <IdeaDetail idea={idea} inspired={inspired} people={everyone} />;
 }

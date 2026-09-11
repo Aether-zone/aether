@@ -16,6 +16,8 @@ import Link from 'next/link';
 import type { ApiFailure } from '@/lib/api';
 import { formatCoordinates, listPlaces } from '@/lib/places';
 
+import { PageBreadcrumbs } from '@/components/page-breadcrumbs';
+
 export const metadata = { title: 'Topos > Places — Aether' };
 
 /** What each way of failing means, and what to do about it. */
@@ -44,6 +46,8 @@ export default async function PlacesPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      <PageBreadcrumbs />
+
       <div className="flex flex-col gap-2">
         <Heading level={1} size="heading-large">
           Topos &gt; Places
@@ -51,7 +55,9 @@ export default async function PlacesPage() {
       </div>
 
       {failure && (
-        <Alert variant={failure === 'noOrganization' ? 'default' : 'destructive'}>
+        <Alert
+          variant={failure === 'noOrganization' ? 'default' : 'destructive'}
+        >
           <AlertDescription>{EXPLANATIONS[failure]}</AlertDescription>
         </Alert>
       )}
@@ -61,15 +67,15 @@ export default async function PlacesPage() {
           {places.length === 1 ? '1 place' : `${places.length} places`}
         </Text>
         {/*
-          * A real anchor styled as a button, not a `Button` wrapping a link:
-          * kosmos's Button renders a `<button>` with no `asChild` escape
-          * hatch, and nesting an anchor inside one is invalid HTML that React
-          * hydrates badly. This way middle-click and "open in new tab" work.
-          *
-          * Hidden rather than disabled when there is no organization — there
-          * is no such thing as a disabled link, and a dead one is worse than
-          * an absent one.
-          */}
+         * A real anchor styled as a button, not a `Button` wrapping a link:
+         * kosmos's Button renders a `<button>` with no `asChild` escape
+         * hatch, and nesting an anchor inside one is invalid HTML that React
+         * hydrates badly. This way middle-click and "open in new tab" work.
+         *
+         * Hidden rather than disabled when there is no organization — there
+         * is no such thing as a disabled link, and a dead one is worse than
+         * an absent one.
+         */}
         {failure !== 'noOrganization' && (
           <Link
             href="/topos/places/new"

@@ -1,12 +1,11 @@
-import {
-  Heading,
-} from '@aether-zone/kosmos';
+import { Heading } from '@aether-zone/kosmos';
 
 import { getSession } from '@/lib/auth';
 
-export default async function DashboardPage() {
+import { PageBreadcrumbs } from '@/components/page-breadcrumbs';
 
-  const session = await getSession()
+export default async function DashboardPage() {
+  const session = await getSession();
 
   // The layout has already redirected anyone without one; this is for the type.
   if (!session) {
@@ -15,6 +14,8 @@ export default async function DashboardPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      <PageBreadcrumbs />
+
       <div className="flex flex-col gap-2">
         <Heading level={1} size="heading-large">
           Aether

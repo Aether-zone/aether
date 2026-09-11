@@ -1,24 +1,22 @@
 import type { GoalDTO } from '@aether/contract';
 
 /**
- * Active goals first, soonest deadline at the top; everything settled after.
+ * Soonest deadline at the top, then oldest.
  *
  * Pure, and deliberately not in `lib/goals.ts`, which is `server-only`: a
  * comparator should be checkable without a session behind it.
  *
- * The ordering answers "what am I aiming at, and what is closest" — so a goal
- * that has been reached or given up is out of the way, and among the live ones
- * the one running out of time is at the top. An undated goal sorts after the
- * dated ones: it is not urgent, it is unscheduled, and putting it first would
- * be claiming the opposite.
+ * It used to lift active goals above everything else. **The board does that
+ * now**, by grouping on status — and the old rule became wrong the moment
+ * `PLANNED` existed, since it would have filed a goal not yet started in with
+ * the ones already over. Sorting by state and grouping by state were two
+ * answers to one question, and the group is the better of them.
+ *
+ * What is left orders goals that share a state: the one running out of time
+ * first. An undated goal sorts after the dated ones — it is not urgent, it is
+ * unscheduled, and putting it first would claim the opposite.
  */
 export function byUrgency(a: GoalDTO, b: GoalDTO): number {
-  const settled = (goal: GoalDTO) => (goal.status === 'ACTIVE' ? 0 : 1);
-
-  if (settled(a) !== settled(b)) {
-    return settled(a) - settled(b);
-  }
-
   if (a.targetAt !== b.targetAt) {
     if (!a.targetAt) return 1;
     if (!b.targetAt) return -1;

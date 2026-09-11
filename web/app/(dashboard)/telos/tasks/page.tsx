@@ -2,10 +2,11 @@ import { Alert, AlertDescription, Heading, Text } from '@aether-zone/kosmos';
 
 import type { ApiFailure } from '@/lib/api';
 import { listProjects } from '@/lib/projects';
-import { byWhatNeedsDoing } from '@/lib/task-order';
 import { listTasks } from '@/lib/tasks';
 
 import { TasksView } from './tasks-view';
+
+import { PageBreadcrumbs } from '@/components/page-breadcrumbs';
 
 export const metadata = { title: 'Telos > Tasks — Aether' };
 
@@ -31,30 +32,33 @@ const EXPLANATIONS: Record<ApiFailure['reason'], string> = {
  * select needs the titles. Both requests go at once — they do not depend on
  * each other, and running them in sequence would make the page wait twice.
  *
- * The order is the console's, not the api's. Sorting here rather than asking
- * the api to do it keeps "what order do people want to read this in" a
- * question about the screen.
+ * The grouping and the order within each group are the console's, not the
+ * api's — which keeps "what order do people want to read this in" a question
+ * about the screen.
  */
 export default async function TasksPage() {
   const [tasks, projects] = await Promise.all([listTasks(), listProjects()]);
 
-  const ordered = tasks.ok ? [...tasks.data].sort(byWhatNeedsDoing) : [];
+  const all = tasks.ok ? tasks.data : [];
   const failure = tasks.ok ? null : tasks.reason;
 
   return (
     <div className="flex flex-col gap-6">
+      <PageBreadcrumbs />
+
       <div className="flex flex-col gap-2">
         <Heading level={1} size="heading-large">
           Telos &gt; Tasks
         </Heading>
         <Text tone="muted" size="body-small">
-          The end of the chain: an idea becomes a goal, a goal is pursued by a
-          project, and a project is done through tasks.
+          The smallest unit of progress.
         </Text>
       </div>
 
       {failure && (
-        <Alert variant={failure === 'noOrganization' ? 'default' : 'destructive'}>
+        <Alert
+          variant={failure === 'noOrganization' ? 'default' : 'destructive'}
+        >
           <AlertDescription>{EXPLANATIONS[failure]}</AlertDescription>
         </Alert>
       )}
@@ -66,7 +70,7 @@ export default async function TasksPage() {
           A projects failure is quieter — the select falls back to "No project"
           only, which is a diminished screen rather than a broken one, and
           saying so twice would bury the message that matters. */}
-      <TasksView tasks={ordered} projects={projects.ok ? projects.data : []} />
+      <TasksView tasks={all} projects={projects.ok ? projects.data : []} />
     </div>
   );
 }

@@ -1,6 +1,10 @@
 import 'server-only';
 
-import type { CreateProjectDTO, ProjectDTO, UpdateProjectDTO } from '@aether/contract';
+import type {
+  CreateProjectDTO,
+  ProjectDTO,
+  UpdateProjectDTO,
+} from '@aether/contract';
 
 import { apiDelete, apiGet, apiPatch, apiPost, type ApiResult } from './api';
 
@@ -12,7 +16,13 @@ export function listProjects(): Promise<ApiResult<ProjectDTO[]>> {
   return apiGet<ProjectDTO[]>(PROJECTS);
 }
 
-export function createProject(project: CreateProjectDTO): Promise<ApiResult<ProjectDTO>> {
+export function getProject(id: string): Promise<ApiResult<ProjectDTO>> {
+  return apiGet<ProjectDTO>(`${PROJECTS}/${encodeURIComponent(id)}`);
+}
+
+export function createProject(
+  project: CreateProjectDTO,
+): Promise<ApiResult<ProjectDTO>> {
   return apiPost<ProjectDTO>(PROJECTS, project);
 }
 

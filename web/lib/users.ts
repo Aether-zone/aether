@@ -42,7 +42,6 @@ export function deleteUser(id: string) {
   return apiDelete(`${USERS}/${encodeURIComponent(id)}`);
 }
 
-/** "Ada Lovelace", for a table cell and an avatar's tooltip. */
-export function fullName(user: UserDTO): string {
-  return `${user.firstName} ${user.lastName}`;
-}
+// `fullName` and `initials` live in `./person-display`, which is not
+// `server-only`: an avatar is drawn in the browser and needs them there.
+export { fullName, initials } from './person-display';
