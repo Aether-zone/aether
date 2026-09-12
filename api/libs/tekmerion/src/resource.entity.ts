@@ -1,6 +1,10 @@
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 
-import { type ResourceSource, type ResourceType } from '@aether/contract';
+import {
+  type RelationTargetDTO,
+  type ResourceSource,
+  type ResourceType,
+} from '@aether/contract';
 
 /**
  * A resource, as a row.
@@ -58,6 +62,48 @@ export class ResourceEntity {
 
   @Column({ type: 'simple-json', nullable: true })
   metadata!: Record<string, unknown> | null;
+
+  /**
+   * Free-text labels, already lowercased by the contract.
+   *
+   * `simple-array` — a comma-joined string — which is the one place in aether
+   * where that choice is a genuine constraint rather than a safe default: a
+   * tag containing a comma would split in two on the way back out. The schema
+   * does not forbid one, so this is a limit worth remembering when tags grow
+   * a syntax.
+   */
+  @Column({ type: 'simple-array' })
+  tags!: string[];
+
+  @Column({ type: 'simple-array' })
+  involves!: string[];
+
+  /*
+   * The three relation arrays.
+   *
+   * `simple-json` rather than `simple-array`, which holds a comma-joined
+   * string and so cannot hold objects at all — and these are `{kind, id}`
+   * pairs, because the target set is heterogeneous and an id alone cannot say
+   * which IRI to mint from it.
+   *
+   * Nullable, and normalised to `[]` on the way out. Not because "no
+   * relations" is a different state from "none stated" — it is not — but
+   * because `synchronize` adds a column to a table that already has rows, and
+   * a NOT NULL column with no default cannot be added to one. A row written
+   * before these existed reads as null and means the same as empty.
+   */
+  @Column({ type: 'simple-json', nullable: true })
+  about!: RelationTargetDTO[] | null;
+
+  @Column({ type: 'simple-json', nullable: true })
+  relatedTo!: RelationTargetDTO[] | null;
+
+  @Column({ type: 'simple-json', nullable: true })
+  mentions!: RelationTargetDTO[] | null;
+
+  /** The stored object this resource is, where it is one. */
+  @Column({ type: 'text', nullable: true })
+  fileId!: string | null;
 
   @Column({ type: 'text' })
   createdAt!: string;

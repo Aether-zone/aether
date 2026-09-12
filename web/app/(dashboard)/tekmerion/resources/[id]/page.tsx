@@ -3,7 +3,8 @@ import { notFound } from 'next/navigation';
 
 import type { ApiFailure } from '@/lib/api';
 import { displayTitle } from '@/lib/resource-order';
-import { getResource } from '@/lib/resources';
+import { getFile, getResource } from '@/lib/resources';
+import { listUsers } from '@/lib/users';
 
 import { ResourceDetail } from './resource-detail';
 
@@ -63,5 +64,26 @@ export default async function ResourceDetailPage({
     );
   }
 
-  return <ResourceDetail resource={result.data} />;
+  const resource = result.data;
+
+  const [people, file] = await Promise.all([
+    // Always: the page can change who a resource is about, and the picker
+    // needs everyone even when it currently names nobody.
+    listUsers(),
+    // Only when there is one to fetch.
+    resource.fileId ? getFile(resource.fileId) : null,
+  ]);
+
+  return (
+    <ResourceDetail
+      resource={resource}
+      /*
+       * A `fileId` that resolves to nothing is a row deleted since. The card
+       * is dropped rather than shown broken — the rest of the resource is
+       * still perfectly readable.
+       */
+      file={file?.ok ? file.data : null}
+      people={people.ok ? people.data : []}
+    />
+  );
 }

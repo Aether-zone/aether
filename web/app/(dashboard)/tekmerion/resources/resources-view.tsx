@@ -3,88 +3,76 @@
 import {
   Alert,
   AlertDescription,
-  Badge,
   Button,
   EmptyState,
   Input,
-  Select,
   Text,
-  Textarea,
 } from '@aether-zone/kosmos';
-import { RESOURCE_TYPES, type ResourceDTO } from '@aether/contract';
+import {
+  RESOURCE_TYPES,
+  type ResourceDTO,
+  type ResourceType,
+  type UserDTO,
+} from '@aether/contract';
 import Link from 'next/link';
-import { useState, useTransition, type FormEvent } from 'react';
-import { IoTrashOutline } from 'react-icons/io5';
+import { useMemo, useState, useTransition } from 'react';
+import { IoAddOutline, IoSearchOutline, IoTrashOutline } from 'react-icons/io5';
 
 import { IconButton } from '@/components/icon-button';
-import {
-  displayTitle,
-  formatMoment,
-  isUntitled,
-  snippet,
-} from '@/lib/resource-order';
+import { fullName } from '@/lib/person-display';
+import { displayTitle, isUntitled, snippet } from '@/lib/resource-order';
+import { formatAge, matches } from '@/lib/resource-search';
 
-import { addResourceAction, removeResourceAction } from './actions';
+import { removeResourceAction } from './actions';
 import { KINDS } from './kinds';
+import { NewResourceDialog } from './new-resource-dialog';
 
 const RESOURCES = '/tekmerion/resources';
 
 /**
- * What tekmerion is holding, and a way to add to it.
+ * What tekmerion is holding, with a way to find things in it.
  *
- * The filing form asks for a kind and text rather than a title, which is the
- * opposite of idea capture and deliberate: an idea is a sentence someone wants
- * out of their head, where a resource is a *thing* — its substance is what it
- * says, and a title is something a person adds later if it turns out to
- * matter. Requiring one would mean naming a document before reading it.
- *
- * Rows link through to the one, because a resource cannot be edited in place
- * the way an idea can: its content does not fit on a line.
+ * Filtering happens here rather than at the api, and that is a deliberate
+ * limit rather than a shortcut: it searches the list already on the page, so
+ * it is instant and it cannot search what has not been fetched. The moment
+ * this list is long enough to paginate, the search has to move to the server —
+ * and when it does, it should go to mneme rather than to a `LIKE`, because
+ * "searchable by meaning" is mneme's whole job.
  */
-export function ResourcesView({ resources }: { resources: ResourceDTO[] }) {
-  const [type, setType] = useState<string>('NOTE');
-  const [title, setTitle] = useState('');
-  const [content, setContent] = useState('');
+export function ResourcesView({
+  resources,
+  people,
+}: {
+  resources: ResourceDTO[];
+  people: UserDTO[];
+}) {
+  const [filing, setFiling] = useState(false);
+  const [query, setQuery] = useState('');
+  const [kind, setKind] = useState<ResourceType | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  // A note is worth filing with text alone; anything else needs at least a
-  // name, or the row would be an icon and a date.
-  const fileable = content.trim() !== '' || title.trim() !== '';
+  const shown = useMemo(
+    () =>
+      resources.filter(
+        (resource) =>
+          (kind === null || resource.type === kind) &&
+          matches(resource, query, people),
+      ),
+    [resources, kind, query, people],
+  );
 
-  function file(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    if (!fileable) {
-      return;
-    }
-
-    setError(null);
-
-    startTransition(async () => {
-      const result = await addResourceAction({
-        type,
-        ...(title.trim() ? { title: title.trim() } : {}),
-        ...(content.trim() ? { content } : {}),
-        source: { type: 'console', name: 'Typed into the console' },
-      });
-
-      if (result.error || result.fieldErrors) {
-        setError(
-          result.error ??
-            Object.values(result.fieldErrors ?? {})[0] ??
-            'That could not be filed.',
-        );
-
-        return;
-      }
-
-      // Cleared only on success, so a failed save does not lose the text.
-      setTitle('');
-      setContent('');
-    });
-  }
+  /*
+   * Only the kinds actually present get a chip, plus whichever is selected so
+   * it does not vanish from under the cursor when the last of its kind is
+   * deleted. A row of eight filters over three resources is a row of dead ends.
+   */
+  const kinds = RESOURCE_TYPES.filter(
+    (candidate) =>
+      candidate === kind ||
+      resources.some((resource) => resource.type === candidate),
+  );
 
   function remove(resource: ResourceDTO) {
     setError(null);
@@ -109,114 +97,131 @@ export function ResourcesView({ resources }: { resources: ResourceDTO[] }) {
         </Alert>
       )}
 
-      <form
-        onSubmit={file}
-        className="flex flex-col gap-2 rounded-md border border-border p-3"
-      >
-        <div className="flex gap-2">
-          <Select
-            aria-label="Kind"
-            value={type}
-            onChange={(event) => setType(event.target.value)}
-            className="w-40"
-          >
-            {RESOURCE_TYPES.map((kind) => (
-              <option key={kind} value={kind}>
-                {KINDS[kind].label}
-              </option>
-            ))}
-          </Select>
-          <Input
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-            placeholder="Title (optional)"
-            aria-label="Title"
-            className="flex-1"
-          />
-        </div>
+      <div className="flex justify-end">
+        <Button type="button" onClick={() => setFiling(true)}>
+          <IoAddOutline className="size-4" aria-hidden />
+          New resource
+        </Button>
+      </div>
 
-        <Textarea
-          value={content}
-          onChange={(event) => setContent(event.target.value)}
-          placeholder="Paste or write the thing itself…"
-          aria-label="Content"
-          rows={3}
+      <NewResourceDialog
+        people={people}
+        open={filing}
+        onOpenChange={setFiling}
+      />
+
+      <div className="relative">
+        <IoSearchOutline
+          className="pointer-events-none absolute left-4 top-1/2 size-5 -translate-y-1/2 text-muted-foreground"
+          aria-hidden
         />
+        <Input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search resources by topic, person or tag…"
+          aria-label="Search resources"
+          className="h-14 pl-12 text-base"
+        />
+      </div>
 
-        <div className="flex justify-end">
-          <Button type="submit" disabled={pending || !fileable}>
-            File it
-          </Button>
+      {kinds.length > 1 && (
+        <div className="flex flex-wrap gap-2">
+          <FilterChip active={kind === null} onClick={() => setKind(null)}>
+            All
+          </FilterChip>
+          {kinds.map((candidate) => (
+            <FilterChip
+              key={candidate}
+              active={kind === candidate}
+              onClick={() => setKind(candidate)}
+            >
+              {KINDS[candidate].label}
+            </FilterChip>
+          ))}
         </div>
-      </form>
+      )}
 
       {resources.length === 0 ? (
         <EmptyState
           title="Nothing filed"
-          description="A resource is the artefact itself — a note, a document, a page, a recording. What it means is arachni's business and what it says is mneme's; this is where it came from and what it is."
+          description="A resource is the artefact itself — a note, a document, a page, a recording. What it means is arachni's business and what it says is mneme's."
+        />
+      ) : shown.length === 0 ? (
+        <EmptyState
+          title="Nothing matches"
+          description="This searches titles, descriptions, tags and the people a resource is about — not the text inside it. Searching what a document says is mneme's job, and this page does not ask it yet."
         />
       ) : (
-        <ul className="flex flex-col gap-2">
-          {resources.map((resource) => {
-            const Icon = KINDS[resource.type].icon;
-            const line = snippet(resource.content);
+        <ul className="grid gap-4 md:grid-cols-2">
+          {shown.map((resource) => {
+            const line = snippet(resource.description ?? resource.content, 140);
+            const age = formatAge(resource.createdAt);
+
+            const labels = [
+              ...resource.tags,
+              ...resource.involves
+                .map((id) => people.find((person) => person.id === id))
+                .filter((person): person is UserDTO => person !== undefined)
+                .map(fullName),
+            ];
 
             return (
               <li
                 key={resource.id}
                 className={[
-                  'flex items-start gap-3 rounded-md border border-border p-3',
+                  'flex flex-col gap-3 rounded-lg border border-border p-5 transition-colors hover:border-muted-foreground/40',
                   busyId === resource.id && 'opacity-50',
                 ]
                   .filter(Boolean)
                   .join(' ')}
               >
-                <Icon
-                  className="mt-0.5 size-5 shrink-0 text-muted-foreground"
-                  aria-label={KINDS[resource.type].label}
-                />
-
-                <span className="min-w-0 flex-1">
+                <div className="flex items-start justify-between gap-3">
                   <Link
                     href={`${RESOURCES}/${resource.id}`}
                     className={[
-                      'block truncate font-medium hover:underline',
-                      // An invented title is not the resource's own, and a row
-                      // that showed the two the same way would be claiming
-                      // someone named this.
+                      'font-medium hover:underline',
                       isUntitled(resource)
-                        ? 'text-muted-foreground italic'
+                        ? 'italic text-muted-foreground'
                         : 'text-foreground',
                     ].join(' ')}
                   >
                     {displayTitle(resource)}
                   </Link>
 
-                  {line && (
-                    <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-                      {line}
-                    </span>
-                  )}
-
-                  <span className="mt-1 flex flex-wrap items-center gap-2">
-                    {resource.source && (
-                      <Badge variant="secondary" size="sm">
-                        {resource.source.name ?? resource.source.type}
-                      </Badge>
-                    )}
-                    <span className="text-xs text-muted-foreground">
-                      {formatMoment(resource.createdAt)}
-                    </span>
+                  <span className="shrink-0 rounded border border-primary/30 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-primary">
+                    {KINDS[resource.type].label}
                   </span>
-                </span>
+                </div>
 
-                <IconButton
-                  aria-label={`Delete ${displayTitle(resource)}`}
-                  disabled={busyId === resource.id}
-                  onClick={() => remove(resource)}
-                >
-                  <IoTrashOutline className="size-4" aria-hidden />
-                </IconButton>
+                {line && (
+                  <p className="line-clamp-2 text-sm text-muted-foreground">
+                    {line}
+                  </p>
+                )}
+
+                <div className="mt-auto flex items-end justify-between gap-4 pt-2">
+                  {/* Tags and people in one run, separated by middots. They
+                      answer the same question — what is this filed under —
+                      and two rows would imply they are read differently. */}
+                  <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                    {labels.join(' · ')}
+                  </span>
+
+                  <span className="flex shrink-0 items-center gap-2">
+                    {age && (
+                      <span className="font-mono text-xs text-muted-foreground">
+                        {age}
+                      </span>
+                    )}
+                    <IconButton
+                      aria-label={`Delete ${displayTitle(resource)}`}
+                      disabled={pending}
+                      onClick={() => remove(resource)}
+                    >
+                      <IoTrashOutline className="size-4" aria-hidden />
+                    </IconButton>
+                  </span>
+                </div>
               </li>
             );
           })}
@@ -224,10 +229,39 @@ export function ResourcesView({ resources }: { resources: ResourceDTO[] }) {
       )}
 
       <Text tone="muted" size="body-small">
-        {resources.length === 1
-          ? '1 resource'
-          : `${resources.length} resources`}
+        {shown.length === resources.length
+          ? resources.length === 1
+            ? '1 resource'
+            : `${resources.length} resources`
+          : `${shown.length} of ${resources.length} resources`}
       </Text>
     </div>
+  );
+}
+
+/** A filter that reads as pressed when it is. */
+function FilterChip({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={[
+        'rounded-md border px-3 py-1.5 text-sm transition-colors',
+        active
+          ? 'border-transparent bg-muted text-foreground'
+          : 'border-border text-muted-foreground hover:border-muted-foreground/40',
+      ].join(' ')}
+    >
+      {children}
+    </button>
   );
 }

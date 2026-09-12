@@ -68,9 +68,14 @@ import { envSchema, type Env } from './env';
      * can index it without either being told about this api.
      *
      * `connectTimeoutMs: false` starts the app even with no broker reachable
-     * and connects in the background. aether only publishes, so a missing
-     * broker costs the announcements and nothing else; the api still serves
-     * every request, and a failed publish is logged where it happens.
+     * and connects in the background. The api still serves every request
+     * without one, and a failed publish is logged where it happens.
+     *
+     * It is no longer free, though: aether consumes as well as publishes now —
+     * `ObjectUploadedListener` is how a file row learns its bytes arrived — so a
+     * broker that stays down leaves uploads sitting `INITIAL` until the browser
+     * confirms one or somebody looks. Starting anyway is still the right trade,
+     * because refusing to boot would take the whole api down for it.
      */
     RabbitMqModule.registerAsync({
       inject: [ENV],

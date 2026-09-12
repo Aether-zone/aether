@@ -49,13 +49,22 @@ describe('a user', () => {
   it('requires the phone number in international format', () => {
     // `0612345678` means something only if you already know the country, and
     // a number crossing a service boundary has left that context behind.
-    expect(userSchema.safeParse({ ...valid, phoneNumber: '+31612345678' }).success).toBe(true);
-    expect(userSchema.safeParse({ ...valid, phoneNumber: '0612345678' }).success).toBe(false);
-    expect(userSchema.safeParse({ ...valid, phoneNumber: '06-1234 5678' }).success).toBe(false);
+    expect(
+      userSchema.safeParse({ ...valid, phoneNumber: '+31612345678' }).success,
+    ).toBe(true);
+    expect(
+      userSchema.safeParse({ ...valid, phoneNumber: '0612345678' }).success,
+    ).toBe(false);
+    expect(
+      userSchema.safeParse({ ...valid, phoneNumber: '06-1234 5678' }).success,
+    ).toBe(false);
   });
 
   it('says what is wrong in words a form can show', () => {
-    const result = userSchema.safeParse({ ...valid, phoneNumber: '0612345678' });
+    const result = userSchema.safeParse({
+      ...valid,
+      phoneNumber: '0612345678',
+    });
 
     expect(result.success).toBe(false);
     expect(result.error?.issues[0].message).toMatch(/international format/);
@@ -73,7 +82,9 @@ describe('creating one', () => {
   });
 
   it('still requires everything else', () => {
-    expect(createUserSchema.safeParse({ firstName: 'Ada' }).success).toBe(false);
+    expect(createUserSchema.safeParse({ firstName: 'Ada' }).success).toBe(
+      false,
+    );
   });
 });
 
@@ -92,5 +103,44 @@ describe('updating one', () => {
 
   it('still validates the fields it is given', () => {
     expect(updateUserSchema.safeParse({ email: 'nope' }).success).toBe(false);
+  });
+});
+
+describe('what is worth remembering about somebody', () => {
+  const GROUP = '77777777-7777-4777-8777-777777777777';
+
+  it('takes a note in free text', () => {
+    /*
+     * Deliberately unstructured. What a person needs to recall about somebody
+     * is not a set of fields anybody can enumerate in advance, and a form that
+     * tried would collect less than a sentence does.
+     */
+    expect(
+      userSchema.parse({ ...valid, note: 'Prefers written updates.' }).note,
+    ).toBe('Prefers written updates.');
+  });
+
+  it('records the group they belong to', () => {
+    expect(userSchema.parse({ ...valid, groupId: GROUP }).groupId).toBe(GROUP);
+  });
+
+  it('refuses a group that is not an id', () => {
+    expect(
+      userSchema.safeParse({ ...valid, groupId: 'ClaimPilot' }).success,
+    ).toBe(false);
+  });
+
+  it('needs neither', () => {
+    expect(userSchema.parse(valid).note).toBeUndefined();
+    expect(userSchema.parse(valid).groupId).toBeUndefined();
+  });
+
+  it('lets both be taken back with null', () => {
+    // A note that stopped being true, a group somebody left. An optional-only
+    // field could be added and never removed.
+    expect(updateUserSchema.parse({ note: null, groupId: null })).toEqual({
+      note: null,
+      groupId: null,
+    });
   });
 });

@@ -21,6 +21,7 @@ import {
   IoLocationOutline,
   IoLogOutOutline,
   IoMapOutline,
+  IoPeopleCircleOutline,
   IoPeopleOutline,
   IoRepeatOutline,
   IoSettingsOutline,
@@ -81,6 +82,20 @@ export const NAV_ITEMS: NavItem[] = [
 /** Prosopone — the person, and who they are to each other. */
 export const PROSOPONE_ITEMS: NavItem[] = [
   { href: '/prosopone/people', label: 'People', icon: icon(IoPeopleOutline) },
+  /*
+   * A circled group rather than a building: topos already owns the building
+   * for Places, and two identical glyphs in one sidebar weaken each other.
+   * This is also the truer picture — a group is a set of people, not premises.
+   *
+   * Called "Groups" and not "Organizations" because the switcher directly
+   * above this nav is the *tenant*, and two controls a few pixels apart both
+   * reading "organization" would be one word for two unrelated things.
+   */
+  {
+    href: '/prosopone/groups',
+    label: 'Groups',
+    icon: icon(IoPeopleCircleOutline),
+  },
   // A link, not a network: the graph glyph belongs to arachni below, and two
   // node-and-edge icons in one sidebar would each weaken the other.
   {

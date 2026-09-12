@@ -11,6 +11,7 @@ import {
   Delete,
   Get,
   HttpCode,
+  Headers,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -20,13 +21,19 @@ import {
 } from '@nestjs/common';
 
 import {
+  createPresignedUploadSchema,
   createResourceSchema,
   updateResourceSchema,
+  type CreatePresignedUploadDTO,
   type CreateResourceDTO,
+  type FileDTO,
+  type PreparedUploadDTO,
   type ResourceDTO,
   type UpdateResourceDTO,
 } from '@aether/contract';
 
+import { FileService } from './file.service';
+import { bearerToken } from './loculus/bearer-token';
 import { ResourceService } from './resource.service';
 
 /**
@@ -42,7 +49,85 @@ import { ResourceService } from './resource.service';
 @Controller('organizations/:organizationId/resources')
 @UseGuards(OrganizationGuard)
 export class ResourceController {
-  constructor(private readonly resources: ResourceService) {}
+  constructor(
+    private readonly resources: ResourceService,
+    private readonly files: FileService,
+  ) {}
+
+  /**
+   * Asks loculus where a file may be uploaded.
+   *
+   * The browser spends the returned URL against the object store directly, so
+   * the bytes never cross aether — which is what lets a large file cost this
+   * api one small JSON round trip. The `fileId` that comes back is what a
+   * later `POST /resources` attaches.
+   *
+   * Organization membership is already established by `OrganizationGuard`, and
+   * the caller's own token is what loculus is asked with: aether can obtain
+   * nothing here that the person could not have obtained themselves.
+   */
+  @Post('presign')
+  presignUpload(
+    @CurrentActor() actor: Actor,
+    @Headers('authorization') authorization: string | undefined,
+    @Body(new ZodValidationPipe(createPresignedUploadSchema))
+    request: CreatePresignedUploadDTO,
+  ): Promise<PreparedUploadDTO> {
+    return this.files.prepare(actor, request, bearerToken(authorization));
+  }
+
+  /**
+   * Records that the bytes arrived.
+   *
+   * Separate from creating the resource because the two can fail apart: the
+   * upload may succeed and the resource never be filed, or the browser may
+   * never come back at all. A file left `INITIAL` is the evidence of that.
+   */
+  @Post('files/:fileId/uploaded')
+  markUploaded(
+    @CurrentActor() actor: Actor,
+    @Param('fileId', ParseUUIDPipe) fileId: string,
+  ): Promise<FileDTO> {
+    return this.files.markUploaded(actor, fileId);
+  }
+
+  /**
+   * What is known about a stored file.
+   *
+   * Its status above all: a row can exist for an upload that never finished,
+   * and a page offering to download one of those would be offering a link to
+   * nothing.
+   */
+  @Get('files/:fileId')
+  file(
+    @CurrentActor() actor: Actor,
+    @Param('fileId', ParseUUIDPipe) fileId: string,
+  ): Promise<FileDTO> {
+    return this.files.get(actor, fileId);
+  }
+
+  /**
+   * Somewhere to read a file back from, signed for this caller.
+   *
+   * Asked for at the moment somebody clicks, not when the page is rendered.
+   * The URL expires, and one minted with the page would stop working while the
+   * reader was still looking at it — which is the same reason `FileDTO`
+   * carries no URL of its own.
+   */
+  @Get('files/:fileId/download')
+  async download(
+    @CurrentActor() actor: Actor,
+    @Headers('authorization') authorization: string | undefined,
+    @Param('fileId', ParseUUIDPipe) fileId: string,
+  ): Promise<{ downloadUrl: string }> {
+    return {
+      downloadUrl: await this.files.downloadUrl(
+        actor,
+        fileId,
+        bearerToken(authorization),
+      ),
+    };
+  }
 
   /**
    * Everything filed here, or the one a given system already gave us.

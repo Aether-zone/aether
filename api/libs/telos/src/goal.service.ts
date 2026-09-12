@@ -136,9 +136,6 @@ export class GoalService {
          * thing someone does on purpose rather than a state to default into.
          */
         status: 'ACTIVE',
-        // Nothing has happened yet, and the caller cannot say otherwise: a goal
-        // set at 80% is a claim about work that does not exist.
-        progress: 0,
         title: input.title,
         description: input.description ?? null,
         startsAt: input.startsAt ?? null,
@@ -271,12 +268,13 @@ const merge = <T>(current: T | null, change: T | null | undefined): T | null =>
 /**
  * A goal as this service deals in it: everything but `realizedBy`.
  *
- * That field is the projects naming this goal, which only `ProjectService`
- * knows — so it is composed at the controller rather than invented here.
- * Leaving it off the type is what stops this service quietly returning an
- * empty list that reads as "nothing is being done about it".
+ * Both are read from the projects naming this goal, which only
+ * `ProjectService` and `TaskService` know — so they are composed at the
+ * controller rather than invented here. Leaving them off the type is what
+ * stops this service quietly returning an empty list and a `0` that read as
+ * "nothing is being done about it".
  */
-export type GoalRecord = Omit<GoalDTO, 'realizedBy'>;
+export type GoalRecord = Omit<GoalDTO, 'realizedBy' | 'progress'>;
 
 type StoredGoal = GoalEntity;
 
@@ -289,7 +287,6 @@ const toDto = (goal: GoalEntity): GoalRecord => ({
   ...(goal.startsAt === null ? {} : { startsAt: goal.startsAt }),
   ...(goal.targetAt === null ? {} : { targetAt: goal.targetAt }),
   ...(goal.priority === null ? {} : { priority: goal.priority }),
-  progress: goal.progress,
   inspiredBy: goal.inspiredBy,
   involves: goal.involves,
   sources: goal.sources,

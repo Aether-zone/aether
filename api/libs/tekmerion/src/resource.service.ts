@@ -126,6 +126,12 @@ export class ResourceService {
         externalId: input.externalId ?? null,
         url: input.url ?? null,
         metadata: input.metadata ?? null,
+        tags: input.tags,
+        involves: input.involves,
+        about: input.about,
+        relatedTo: input.relatedTo,
+        mentions: input.mentions,
+        fileId: input.fileId ?? null,
         createdAt: now,
         updatedAt: now,
       }),
@@ -172,6 +178,7 @@ export class ResourceService {
       source: merge(existing.source, changes.source),
       externalId: merge(existing.externalId, changes.externalId),
       url: merge(existing.url, changes.url),
+      fileId: merge(existing.fileId, changes.fileId),
       /*
        * Replaced whole rather than merged key by key. A partial merge would
        * make it impossible to remove a single key, and a caller who sends
@@ -180,6 +187,14 @@ export class ResourceService {
        * leaves a stale key behind forever.
        */
       metadata: merge(existing.metadata, changes.metadata),
+      /*
+       * Replaced whole, like `tags`. Absent leaves the set alone and `[]`
+       * empties it — there is no `null` here because the empty array already
+       * says "none", which is why the schema does not allow one.
+       */
+      about: changes.about ?? existing.about,
+      relatedTo: changes.relatedTo ?? existing.relatedTo,
+      mentions: changes.mentions ?? existing.mentions,
       updatedAt: new Date().toISOString(),
     });
 
@@ -279,6 +294,17 @@ const toDto = (resource: ResourceEntity): ResourceDTO => ({
   ...(resource.externalId === null ? {} : { externalId: resource.externalId }),
   ...(resource.url === null ? {} : { url: resource.url }),
   ...(resource.metadata === null ? {} : { metadata: resource.metadata }),
+  tags: resource.tags,
+  involves: resource.involves,
+  /*
+   * `?? []` because the columns are nullable: a row written before these
+   * existed reads as null and means the same as none. The DTO promises an
+   * array, so the normalising happens once, here.
+   */
+  about: resource.about ?? [],
+  relatedTo: resource.relatedTo ?? [],
+  mentions: resource.mentions ?? [],
+  ...(resource.fileId === null ? {} : { fileId: resource.fileId }),
   createdAt: resource.createdAt,
   updatedAt: resource.updatedAt,
 });

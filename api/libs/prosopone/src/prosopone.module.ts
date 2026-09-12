@@ -1,6 +1,9 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { GroupController } from './group.controller';
+import { GroupEntity } from './group.entity';
+import { GroupService } from './group.service';
 import { UserEntity } from './user.entity';
 
 import { UserController } from './user.controller';
@@ -17,9 +20,9 @@ import { UserService } from './user.service';
  * back out through HTTP: chronos needs attendees, telos needs an assignee.
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([UserEntity])],
-  controllers: [UserController],
-  providers: [UserService],
-  exports: [UserService],
+  imports: [TypeOrmModule.forFeature([UserEntity, GroupEntity])],
+  controllers: [UserController, GroupController],
+  providers: [UserService, GroupService],
+  exports: [UserService, GroupService],
 })
 export class ProsoponeModule {}

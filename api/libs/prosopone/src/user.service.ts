@@ -5,11 +5,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { announce } from '@aether/events';
 import { randomUUID } from 'node:crypto';
 import { Repository } from 'typeorm';
 
 import {
-  AETHER_SOURCE,
   PERSON_CREATED,
   PERSON_DELETED,
   PERSON_UPDATED,
@@ -18,12 +18,11 @@ import type { CreateUserDTO, UpdateUserDTO, UserDTO } from '@aether/contract';
 import {
   EventPublisher,
   type Actor,
-  type AetherEvent,
   type AetherEventType,
 } from '@aether-zone/organon';
 
 import { UserEntity } from './user.entity';
-import { personIri, toPersonDocument, type PersonJsonLD } from './user.json-ld';
+import { personIri, toPersonDocument } from './user.json-ld';
 
 /**
  * The people prosopone knows about.
@@ -97,6 +96,8 @@ export class UserService {
         id: randomUUID(),
         organizationId: actor.organizationId,
         ...input,
+        note: input.note ?? null,
+        groupId: input.groupId ?? null,
       }),
     );
 
@@ -122,24 +123,15 @@ export class UserService {
    * A failure here does not fail the request. The person *was* created, and
    * answering 500 would invite a retry that creates a second one.
    */
-  private async announce(
+  private announce(
     routingKey: string,
     type: AetherEventType,
     user: StoredUser,
     actor: Actor,
   ): Promise<void> {
-    const event: AetherEvent<PersonJsonLD> = {
-      /*
-       * Overwritten before it leaves. `EventPublisher` spreads its transport
-       * envelope *last*, so the id on the wire is the message's, not this one
-       * — confirmed by watching the exchange. It is set anyway because the
-       * type requires it, and organon's guidance is to treat the envelope's id
-       * as the one identifying the message. akouo publishes the same way.
-       */
-      id: randomUUID(),
+    return announce(this.events, this.logger, {
+      routingKey,
       type,
-      source: AETHER_SOURCE,
-      time: new Date().toISOString(),
       /*
        * The person's IRI, and it must equal the document's `@id`: organon's
        * schema refuses an event where the two disagree, because they are the
@@ -147,53 +139,10 @@ export class UserService {
        * the wrong node.
        */
       subject: personIri(user.id),
-      /*
-       * Which tenant the person belongs to. Not decoration: arachni refuses to
-       * write a node it cannot scope and mneme refuses to index text it cannot
-       * file, so an event without this is *accepted by the schema and dropped
-       * by every consumer* — and akouo cannot insert it at all, because its
-       * `organizationId` column is NOT NULL. Verified by watching an earlier
-       * version of this event reach arachni and leave no row behind.
-       */
       organizationId: user.organizationId,
-      /*
-       * **No `organizationId`, and that has a consequence worth knowing.**
-       *
-       * The field is optional in organon's schema, so this is a valid Aether
-       * event — but both consumers on the exchange drop an event without one:
-       * arachni refuses to write a node it cannot scope, and mneme refuses to
-       * index text it cannot file. Either would be putting one tenant's data
-       * where another could read it.
-       *
-       * Nothing here can supply it honestly. This api's users are not scoped
-       * to an organization — the route is `/users`, not
-       * `/organizations/:id/users` — so the request never named one, and
-       * taking the caller's first membership would be attributing the person
-       * to a tenant nobody chose. The event is emitted as the truth it is:
-       * a person exists, in no stated organization.
-       *
-       * Scoping the store is what fixes this, and it is a breaking change to
-       * the route.
-       */
-      /*
-       * A delete carries no `data` — there is nothing left to describe, and
-       * organon's schema has no field for it on that variant. The subject is
-       * the whole of what a consumer needs to find its copy.
-       */
-      ...(type === 'aether:ResourceDeleted'
-        ? {}
-        : { data: toPersonDocument(user) }),
-      actor: { id: actor.id, type: 'User' },
-    } as AetherEvent<PersonJsonLD>;
-
-    try {
-      await this.events.publish(routingKey, event);
-    } catch (cause) {
-      this.logger.error(
-        `Person ${event.subject} changed but "${routingKey}" could not be published`,
-        cause,
-      );
-    }
+      actor,
+      document: toPersonDocument(toDto(user)),
+    });
   }
 
   /**
@@ -214,7 +163,14 @@ export class UserService {
       await this.refuseDuplicateEmail(actor, changes.email);
     }
 
-    const updated = await this.users.save({ ...existing, ...changes });
+    const updated = await this.users.save({
+      ...existing,
+      ...changes,
+      // `undefined` leaves these alone and `null` removes them; the spread
+      // cannot be trusted with the distinction.
+      note: merge(existing.note, changes.note),
+      groupId: merge(existing.groupId, changes.groupId),
+    });
 
     /*
      * The whole document, not the changed fields. An Aether event describes
@@ -303,11 +259,17 @@ export class UserService {
  */
 type StoredUser = UserEntity;
 
-/** A row as the api answers with it: the tenant dropped, nothing else to map. */
+/** `undefined` keeps what is there; `null` clears it. */
+const merge = <T>(current: T | null, change: T | null | undefined): T | null =>
+  change === undefined ? current : change;
+
+/** A row as the api answers with it: tenant dropped, `null` becomes absent. */
 const toDto = (user: UserEntity): UserDTO => ({
   id: user.id,
   firstName: user.firstName,
   lastName: user.lastName,
   email: user.email,
   phoneNumber: user.phoneNumber,
+  ...(user.note === null ? {} : { note: user.note }),
+  ...(user.groupId === null ? {} : { groupId: user.groupId }),
 });

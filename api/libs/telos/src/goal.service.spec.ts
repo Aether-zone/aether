@@ -441,18 +441,11 @@ describe('a goal’s own facts', () => {
     ).toBe('PLANNED');
   });
 
-  it('starts at no progress, whatever the caller says', async () => {
-    // A goal set at 80% is a claim about work that does not exist.
-    expect((await set(lokal, { title: 'Ship it' })).progress).toBe(0);
-  });
-
-  it('moves its progress', async () => {
-    const goal = await set(lokal, { title: 'Ship it' });
-
-    expect(
-      (await goals.update(lokal, goal.id, { progress: 40 })).progress,
-    ).toBe(40);
-  });
+  /*
+   * Progress is not tested here any more: it is counted from the tasks in the
+   * projects pursuing the goal, which this service knows nothing about.
+   * `goal.controller.spec.ts` has it, over real HTTP with real tasks.
+   */
 
   it('keeps the people it is about', async () => {
     const goal = await set(lokal, { title: 'Help Alice', involves: [ALICE] });
@@ -471,7 +464,7 @@ describe('a goal’s own facts', () => {
     ).toBeUndefined();
   });
 
-  it('announces the people, the rank and the progress', async () => {
+  it('announces the people and the rank', async () => {
     await set(lokal, {
       title: 'Help Alice',
       involves: [ALICE],
@@ -482,8 +475,11 @@ describe('a goal’s own facts', () => {
 
     expect(data.involves).toEqual([{ '@id': `urn:aether:person:${ALICE}` }]);
     expect(data.priority).toBe(2);
-    // Always stated, including zero: "no progress" is a fact about the goal.
-    expect(data.progress).toBe(0);
+    /*
+     * Not `progress`. It is counted from tasks that announce themselves, so a
+     * number here would be a second copy going stale between task events.
+     */
+    expect(data).not.toHaveProperty('progress');
   });
 });
 

@@ -5,6 +5,8 @@ import { TestDatabase } from '../../test-database';
 import { ProjectEntity } from './project.entity';
 import { TaskEntity } from './task.entity';
 import { ProjectService } from './project.service';
+import type { CreateTaskDTO } from '@aether/contract';
+
 import { TaskService } from './task.service';
 
 const actorIn = (organizationId: string): Actor =>
@@ -36,6 +38,18 @@ let publisher: RecordingPublisher;
 let database: TestDatabase;
 
 let tasks: TaskService;
+
+/**
+ * Writes one down the way the controller does.
+ *
+ * `involves` has a default in the schema, so a request may leave it out — but
+ * the service is handed input the pipe has already parsed, and by then the
+ * empty array is there.
+ */
+const write = (
+  actor: Actor,
+  input: Partial<CreateTaskDTO> & { title: string },
+) => tasks.create(actor, { involves: [], ...input });
 let projects: ProjectService;
 
 beforeEach(async () => {
@@ -54,7 +68,7 @@ beforeEach(async () => {
 
 describe('writing one down', () => {
   it('needs only a title', async () => {
-    const task = await tasks.create(lokal, { title: 'Do the thing' });
+    const task = await write(lokal, { title: 'Do the thing' });
 
     expect(task.title).toBe('Do the thing');
     expect(task.projectId).toBeUndefined();
@@ -63,20 +77,18 @@ describe('writing one down', () => {
 
   it('starts every task TODO', async () => {
     // Writing a task down is not doing it.
-    expect((await tasks.create(lokal, { title: 'Do the thing' })).status).toBe(
-      'TODO',
-    );
+    expect((await write(lokal, { title: 'Do the thing' })).status).toBe('TODO');
   });
 
   it('is not closed to begin with', async () => {
     expect(
-      (await tasks.create(lokal, { title: 'Do the thing' })).closedAt,
+      (await write(lokal, { title: 'Do the thing' })).closedAt,
     ).toBeUndefined();
   });
 
   it('gives each one an id of its own', async () => {
-    const first = await tasks.create(lokal, { title: 'First' });
-    const second = await tasks.create(lokal, { title: 'Second' });
+    const first = await write(lokal, { title: 'First' });
+    const second = await write(lokal, { title: 'Second' });
 
     expect(first.id).not.toBe(second.id);
   });
@@ -94,8 +106,7 @@ describe('belonging to a project', () => {
     const { id } = await project();
 
     expect(
-      (await tasks.create(lokal, { title: 'Do the thing', projectId: id }))
-        .projectId,
+      (await write(lokal, { title: 'Do the thing', projectId: id })).projectId,
     ).toBe(id);
   });
 
@@ -103,7 +114,7 @@ describe('belonging to a project', () => {
     // Checked rather than stored blindly: an id pointing at nothing shows up
     // as a task filed under a project that cannot be opened.
     await expect(
-      tasks.create(lokal, {
+      write(lokal, {
         title: 'Do the thing',
         projectId: '11111111-1111-4111-8111-111111111111',
       }),
@@ -118,7 +129,7 @@ describe('belonging to a project', () => {
     });
 
     await expect(
-      tasks.create(lokal, { title: 'Do the thing', projectId: theirs.id }),
+      write(lokal, { title: 'Do the thing', projectId: theirs.id }),
     ).rejects.toThrow(NotFoundException);
   });
 
@@ -128,7 +139,7 @@ describe('belonging to a project', () => {
      * occurs to someone, which is usually before anyone has decided which
      * piece of work it belongs to.
      */
-    const loose = await tasks.create(lokal, { title: 'Do the thing' });
+    const loose = await write(lokal, { title: 'Do the thing' });
     const { id } = await project();
 
     expect(
@@ -138,7 +149,7 @@ describe('belonging to a project', () => {
 
   it('can be taken out of one again', async () => {
     const { id } = await project();
-    const task = await tasks.create(lokal, {
+    const task = await write(lokal, {
       title: 'Do the thing',
       projectId: id,
     });
@@ -150,9 +161,9 @@ describe('belonging to a project', () => {
 
   it('names the tasks a project has', async () => {
     const { id } = await project();
-    const first = await tasks.create(lokal, { title: 'First', projectId: id });
-    await tasks.create(lokal, { title: 'Loose' });
-    const second = await tasks.create(lokal, {
+    const first = await write(lokal, { title: 'First', projectId: id });
+    await write(lokal, { title: 'Loose' });
+    const second = await write(lokal, {
       title: 'Second',
       projectId: id,
     });
@@ -162,7 +173,7 @@ describe('belonging to a project', () => {
 
   it('does not reach across organizations when it does', async () => {
     const { id } = await project();
-    await tasks.create(lokal, { title: 'Ours', projectId: id });
+    await write(lokal, { title: 'Ours', projectId: id });
 
     expect(await tasks.idsInProject(other, id)).toEqual([]);
   });
@@ -184,7 +195,7 @@ describe('finishing one', () => {
   });
 
   it('records when it closed', async () => {
-    const task = await tasks.create(lokal, { title: 'Do the thing' });
+    const task = await write(lokal, { title: 'Do the thing' });
 
     const done = await tasks.update(lokal, task.id, { status: 'DONE' });
 
@@ -192,7 +203,7 @@ describe('finishing one', () => {
   });
 
   it('counts calling it off as closing it too', async () => {
-    const task = await tasks.create(lokal, { title: 'Do the thing' });
+    const task = await write(lokal, { title: 'Do the thing' });
 
     expect(
       (await tasks.update(lokal, task.id, { status: 'CANCELLED' })).closedAt,
@@ -201,7 +212,7 @@ describe('finishing one', () => {
 
   it('leaves a blocked task open', async () => {
     // Blocked is a task that has not happened, not one that will not.
-    const task = await tasks.create(lokal, { title: 'Do the thing' });
+    const task = await write(lokal, { title: 'Do the thing' });
 
     expect(
       (await tasks.update(lokal, task.id, { status: 'BLOCKED' })).closedAt,
@@ -213,7 +224,7 @@ describe('finishing one', () => {
      * The whole reason `closedAt` is stored rather than read from
      * `updatedAt`: renaming a finished task is not finishing it again.
      */
-    const task = await tasks.create(lokal, { title: 'Do the thing' });
+    const task = await write(lokal, { title: 'Do the thing' });
     const { closedAt } = await tasks.update(lokal, task.id, { status: 'DONE' });
 
     jest.advanceTimersByTime(60_000);
@@ -227,7 +238,7 @@ describe('finishing one', () => {
   });
 
   it('clears the closing time when a task reopens', async () => {
-    const task = await tasks.create(lokal, { title: 'Do the thing' });
+    const task = await write(lokal, { title: 'Do the thing' });
     await tasks.update(lokal, task.id, { status: 'DONE' });
 
     expect(
@@ -236,7 +247,7 @@ describe('finishing one', () => {
   });
 
   it('sets a fresh closing time if it is finished again', async () => {
-    const task = await tasks.create(lokal, { title: 'Do the thing' });
+    const task = await write(lokal, { title: 'Do the thing' });
     const first = await tasks.update(lokal, task.id, { status: 'DONE' });
     await tasks.update(lokal, task.id, { status: 'TODO' });
 
@@ -251,7 +262,7 @@ describe('finishing one', () => {
 
 describe('changing one', () => {
   it('leaves the fields a change does not mention alone', async () => {
-    const task = await tasks.create(lokal, {
+    const task = await write(lokal, {
       title: 'Do the thing',
       description: 'And do it well',
       priority: 2,
@@ -270,7 +281,7 @@ describe('changing one', () => {
   });
 
   it('removes a value given null, rather than blanking it', async () => {
-    const task = await tasks.create(lokal, {
+    const task = await write(lokal, {
       title: 'Do the thing',
       priority: 2,
       dueAt: '2026-03-31T22:59:00.000Z',
@@ -296,8 +307,8 @@ describe('changing one', () => {
 
 describe('who can see what', () => {
   it('shows an organization only its own tasks', async () => {
-    await tasks.create(lokal, { title: 'Ours' });
-    await tasks.create(other, { title: 'Theirs' });
+    await write(lokal, { title: 'Ours' });
+    await write(other, { title: 'Theirs' });
 
     expect((await tasks.list(lokal)).map((task) => task.title)).toEqual([
       'Ours',
@@ -309,7 +320,7 @@ describe('who can see what', () => {
 
   it('gives the same 404 for another organization’s task as for no task', async () => {
     // Telling the two apart would answer "does this id exist somewhere".
-    const theirs = await tasks.create(other, { title: 'Theirs' });
+    const theirs = await write(other, { title: 'Theirs' });
 
     await expect(tasks.get(lokal, theirs.id)).rejects.toThrow(
       NotFoundException,
@@ -318,7 +329,7 @@ describe('who can see what', () => {
 
   it('keeps the tenant out of what it returns', async () => {
     // It is in the URL of every route that can reach the record.
-    expect(await tasks.create(lokal, { title: 'Ours' })).not.toHaveProperty(
+    expect(await write(lokal, { title: 'Ours' })).not.toHaveProperty(
       'organizationId',
     );
   });
@@ -326,8 +337,8 @@ describe('who can see what', () => {
 
 describe('removing', () => {
   it('forgets it and leaves the rest alone', async () => {
-    const first = await tasks.create(lokal, { title: 'First' });
-    await tasks.create(lokal, { title: 'Second' });
+    const first = await write(lokal, { title: 'First' });
+    await write(lokal, { title: 'Second' });
 
     await tasks.remove(lokal, first.id);
 
@@ -348,7 +359,7 @@ describe('announcing', () => {
     publisher.published.filter((p) => p.routingKey === key);
 
   it('publishes a created task under the created key', async () => {
-    const task = await tasks.create(lokal, { title: 'Do the thing' });
+    const task = await write(lokal, { title: 'Do the thing' });
 
     const [{ event }] = keyed('task.created');
 
@@ -375,7 +386,7 @@ describe('announcing', () => {
       pursues: [],
       involves: [],
     });
-    await tasks.create(lokal, { title: 'Do the thing', projectId: id });
+    await write(lokal, { title: 'Do the thing', projectId: id });
 
     expect(keyed('task.created')[0].event.data.project).toEqual({
       '@id': `urn:aether:project:${id}`,
@@ -383,13 +394,13 @@ describe('announcing', () => {
   });
 
   it('says nothing about a project when the task stands alone', async () => {
-    await tasks.create(lokal, { title: 'Do the thing' });
+    await write(lokal, { title: 'Do the thing' });
 
     expect(keyed('task.created')[0].event.data).not.toHaveProperty('project');
   });
 
   it('carries the closing time once the task is finished', async () => {
-    const task = await tasks.create(lokal, { title: 'Do the thing' });
+    const task = await write(lokal, { title: 'Do the thing' });
     await tasks.update(lokal, task.id, { status: 'DONE' });
 
     const { data } = keyed('task.updated')[0].event;
@@ -399,7 +410,7 @@ describe('announcing', () => {
   });
 
   it('publishes a delete with no data', async () => {
-    const task = await tasks.create(lokal, { title: 'Do the thing' });
+    const task = await write(lokal, { title: 'Do the thing' });
     await tasks.remove(lokal, task.id);
 
     expect(keyed('task.deleted')[0].event).not.toHaveProperty('data');
@@ -407,7 +418,7 @@ describe('announcing', () => {
 
   it('says nothing when the task was refused', async () => {
     await expect(
-      tasks.create(lokal, {
+      write(lokal, {
         title: 'Do the thing',
         projectId: '11111111-1111-4111-8111-111111111111',
       }),
@@ -422,7 +433,7 @@ describe('announcing', () => {
       pursues: [],
       involves: [],
     });
-    const task = await tasks.create(lokal, {
+    const task = await write(lokal, {
       title: 'Do the thing',
       projectId: id,
     });
@@ -436,3 +447,46 @@ describe('announcing', () => {
 });
 
 afterEach(() => database.close());
+
+describe('who a task is on', () => {
+  const ALICE = '55555555-5555-4555-8555-555555555555';
+  const BOB = '66666666-6666-4666-8666-666666666666';
+
+  it('records the people it was written down against', async () => {
+    expect(
+      (await write(lokal, { title: 'Review the intake', involves: [ALICE] }))
+        .involves,
+    ).toEqual([ALICE]);
+  });
+
+  it('takes more than one, because work gets shared', async () => {
+    const task = await write(lokal, {
+      title: 'Review the intake',
+      involves: [ALICE, BOB],
+    });
+
+    expect(task.involves).toHaveLength(2);
+  });
+
+  it('is empty for a task on nobody in particular', async () => {
+    expect((await write(lokal, { title: 'Do the thing' })).involves).toEqual(
+      [],
+    );
+  });
+
+  it('is replaced as a whole set on update', async () => {
+    const task = await write(lokal, { title: 'Do it', involves: [ALICE] });
+
+    expect(
+      (await tasks.update(lokal, task.id, { involves: [BOB] })).involves,
+    ).toEqual([BOB]);
+  });
+
+  it('announces them as references to prosopone people', async () => {
+    await write(lokal, { title: 'Do it', involves: [ALICE] });
+
+    expect(publisher.published[0].event.data.involves).toEqual([
+      { '@id': `urn:aether:person:${ALICE}` },
+    ]);
+  });
+});

@@ -258,16 +258,20 @@ describe('how far along', () => {
     );
   });
 
-  it('is not the caller’s to set when the goal is created', () => {
-    // Nothing has happened yet; a goal set at 80% is a claim about work that
-    // does not exist.
+  it('is not the caller’s to set, at any point', () => {
+    /*
+     * Counted from the tasks in the projects pursuing this goal. A caller able
+     * to send it could claim a goal was 80% done while every task under it sat
+     * untouched — two answers to one question, with nothing to say which was
+     * right.
+     */
     expect(
       createGoalSchema.parse({ title: 'Ship it', progress: 80 }),
     ).not.toHaveProperty('progress');
-  });
 
-  it('can be moved afterwards', () => {
-    expect(updateGoalSchema.parse({ progress: 40 }).progress).toBe(40);
+    expect(updateGoalSchema.parse({ progress: 40 })).not.toHaveProperty(
+      'progress',
+    );
   });
 });
 

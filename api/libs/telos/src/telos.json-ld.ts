@@ -45,7 +45,6 @@ export const GOAL_CONTEXT = {
   inspiredBy: 'aether:inspiredBy',
   involves: 'aether:involves',
   priority: 'aether:priority',
-  progress: 'aether:progress',
 } as const;
 
 export const PROJECT_CONTEXT = {
@@ -62,6 +61,7 @@ export const TASK_CONTEXT = {
   dueAt: 'aether:dueAt',
   closedAt: 'aether:closedAt',
   project: 'aether:project',
+  involves: 'aether:involves',
 } as const;
 
 /**
@@ -111,7 +111,6 @@ export interface GoalJsonLD extends JsonLdDocument {
   inspiredBy?: { '@id': string }[];
   involves?: { '@id': string }[];
   priority?: number;
-  progress: number;
 }
 
 export interface ProjectJsonLD extends JsonLdDocument {
@@ -139,6 +138,7 @@ export interface TaskJsonLD extends JsonLdDocument {
   dueAt?: string;
   closedAt?: string;
   project?: { '@id': string };
+  involves?: { '@id': string }[];
 }
 
 /**
@@ -187,12 +187,16 @@ export function toIdeaDocument(idea: Omit<IdeaDTO, 'inspired'>): IdeaJsonLD {
  * tell a consumer they are parts of it — which is what decides whether they
  * get deleted along with it.
  *
- * `realizedBy` is **not** published, for the reason `Idea.inspired` is not: it
- * is derived from the projects that name this goal, and each of those
- * announces its own `pursues`. Publishing it here would put one fact on the
- * bus from two records written at different moments.
+ * `realizedBy` and `progress` are **not** published, for the reason
+ * `Idea.inspired` is not: both are read from the projects that name this goal,
+ * and each of those announces its own `pursues` while each task announces
+ * itself. A consumer can do the same arithmetic on what it already has, where
+ * a number published here would be a second copy going stale between task
+ * events.
  */
-export function toGoalDocument(goal: Omit<GoalDTO, 'realizedBy'>): GoalJsonLD {
+export function toGoalDocument(
+  goal: Omit<GoalDTO, 'realizedBy' | 'progress'>,
+): GoalJsonLD {
   return {
     '@context': GOAL_CONTEXT,
     '@id': goalIri(goal.id),
@@ -213,9 +217,6 @@ export function toGoalDocument(goal: Omit<GoalDTO, 'realizedBy'>): GoalJsonLD {
       ? { involves: goal.involves.map((id) => ref(personIri(id))) }
       : {}),
     ...(goal.priority === undefined ? {} : { priority: goal.priority }),
-    // Always stated, including zero: "no progress" is a fact about the goal,
-    // where an omitted field would only say nobody mentioned it.
-    progress: goal.progress,
   };
 }
 
@@ -267,5 +268,8 @@ export function toTaskDocument(task: TaskDTO): TaskJsonLD {
     ...(task.dueAt ? { dueAt: task.dueAt } : {}),
     ...(task.closedAt ? { closedAt: task.closedAt } : {}),
     ...(task.projectId ? { project: ref(projectIri(task.projectId)) } : {}),
+    ...(task.involves.length > 0
+      ? { involves: task.involves.map((id) => ref(personIri(id))) }
+      : {}),
   };
 }

@@ -3,6 +3,13 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { ResourceEntity } from './resource.entity';
 
+import { ENV } from '@aether-zone/organon';
+
+import { FileService } from './file.service';
+import { StoredFile } from './file.entity';
+import { LoculusClient } from './loculus/loculus.client';
+import { LOCULUS_CONFIG, type LoculusConfig } from './loculus/loculus.config';
+import { ObjectUploadedListener } from './object-uploaded.listener';
 import { ResourceController } from './resource.controller';
 import { ResourceService } from './resource.service';
 
@@ -21,9 +28,29 @@ import { ResourceService } from './resource.service';
  * else.
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([ResourceEntity])],
+  imports: [TypeOrmModule.forFeature([ResourceEntity, StoredFile])],
   controllers: [ResourceController],
-  providers: [ResourceService],
-  exports: [ResourceService],
+  providers: [
+    ResourceService,
+    FileService,
+    /*
+     * Here rather than in the root module: it is the storage domain's own
+     * consumer, and it needs `FileService`, which this module provides.
+     */
+    ObjectUploadedListener,
+    LoculusClient,
+    {
+      provide: LOCULUS_CONFIG,
+      inject: [ENV],
+      useFactory: (env: {
+        LOCULUS_URL: string;
+        LOCULUS_TIMEOUT_MS: number;
+      }): LoculusConfig => ({
+        baseUrl: env.LOCULUS_URL,
+        timeoutMs: env.LOCULUS_TIMEOUT_MS,
+      }),
+    },
+  ],
+  exports: [ResourceService, FileService],
 })
 export class TekmerionModule {}
