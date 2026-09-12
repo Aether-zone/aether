@@ -1,0 +1,75 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "types": [
+      "node"
+    ],
+    "rootDir": "./",
+    "tsBuildInfoFile": "dist/tsconfig.app.tsbuildinfo",
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "target": "es2021",
+    "paths": {
+      "@aether/chronos": [
+        "./libs/chronos/src"
+      ],
+      "@aether/chronos/*": [
+        "./libs/chronos/src/*"
+      ],
+      "@aether/events": [
+        "./libs/events/src"
+      ],
+      "@aether/events/*": [
+        "./libs/events/src/*"
+      ],
+      "@aether/oikonomos": [
+        "./libs/oikonomos/src"
+      ],
+      "@aether/oikonomos/*": [
+        "./libs/oikonomos/src/*"
+      ],
+      "@aether/prosopone": [
+        "./libs/prosopone/src"
+      ],
+      "@aether/prosopone/*": [
+        "./libs/prosopone/src/*"
+      ],
+      "@aether/tekmerion": [
+        "./libs/tekmerion/src"
+      ],
+      "@aether/tekmerion/*": [
+        "./libs/tekmerion/src/*"
+      ],
+      "@aether/telos": [
+        "./libs/telos/src"
+      ],
+      "@aether/telos/*": [
+        "./libs/telos/src/*"
+      ],
+      "@aether/topos": [
+        "./libs/topos/src"
+      ],
+      "@aether/topos/*": [
+        "./libs/topos/src/*"
+      ]
+    }
+  },
+  "include": [
+    "src/**/*.ts",
+    "libs/**/*.ts"
+  ],
+  "exclude": [
+    "out-tsc",
+    "dist",
+    "jest.config.ts",
+    "jest.config.cts",
+    "src/**/*.spec.ts",
+    "src/**/*.test.ts",
+    "eslint.config.js",
+    "eslint.config.cjs",
+    "eslint.config.mjs",
+    "libs/**/*.spec.ts",
+    "libs/**/*.test.ts"
+  ]
+}

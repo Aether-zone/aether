@@ -1,0 +1,71 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./out-tsc/jest",
+    "types": [
+      "jest",
+      "node"
+    ],
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "paths": {
+      "@aether/chronos": [
+        "./libs/chronos/src"
+      ],
+      "@aether/chronos/*": [
+        "./libs/chronos/src/*"
+      ],
+      "@aether/events": [
+        "./libs/events/src"
+      ],
+      "@aether/events/*": [
+        "./libs/events/src/*"
+      ],
+      "@aether/oikonomos": [
+        "./libs/oikonomos/src"
+      ],
+      "@aether/oikonomos/*": [
+        "./libs/oikonomos/src/*"
+      ],
+      "@aether/prosopone": [
+        "./libs/prosopone/src"
+      ],
+      "@aether/prosopone/*": [
+        "./libs/prosopone/src/*"
+      ],
+      "@aether/tekmerion": [
+        "./libs/tekmerion/src"
+      ],
+      "@aether/tekmerion/*": [
+        "./libs/tekmerion/src/*"
+      ],
+      "@aether/telos": [
+        "./libs/telos/src"
+      ],
+      "@aether/telos/*": [
+        "./libs/telos/src/*"
+      ],
+      "@aether/topos": [
+        "./libs/topos/src"
+      ],
+      "@aether/topos/*": [
+        "./libs/topos/src/*"
+      ]
+    }
+  },
+  "include": [
+    "jest.config.ts",
+    "jest.config.cts",
+    "src/**/*.test.ts",
+    "src/**/*.spec.ts",
+    "src/**/*.d.ts",
+    "libs/**/*.spec.ts",
+    "libs/**/*.test.ts",
+    "libs/**/*.d.ts"
+  ],
+  "references": [
+    {
+      "path": "./tsconfig.app.json"
+    }
+  ]
+}

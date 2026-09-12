@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json.schemastore.org/nest-cli",
+  "collection": "@nestjs/schematics",
+  "sourceRoot": "src",
+  "compilerOptions": {
+    "deleteOutDir": true,
+    "tsConfigPath": "tsconfig.build.json"
+  },
+  "projects": {
+    "chronos": {
+      "type": "library",
+      "root": "libs/chronos",
+      "entryFile": "index",
+      "sourceRoot": "libs/chronos/src",
+      "compilerOptions": {
+        "tsConfigPath": "libs/chronos/tsconfig.lib.json"
+      }
+    },
+    "events": {
+      "type": "library",
+      "root": "libs/events",
+      "entryFile": "index",
+      "sourceRoot": "libs/events/src",
+      "compilerOptions": {
+        "tsConfigPath": "libs/events/tsconfig.lib.json"
+      }
+    },
+    "oikonomos": {
+      "type": "library",
+      "root": "libs/oikonomos",
+      "entryFile": "index",
+      "sourceRoot": "libs/oikonomos/src",
+      "compilerOptions": {
+        "tsConfigPath": "libs/oikonomos/tsconfig.lib.json"
+      }
+    },
+    "prosopone": {
+      "type": "library",
+      "root": "libs/prosopone",
+      "entryFile": "index",
+      "sourceRoot": "libs/prosopone/src",
+      "compilerOptions": {
+        "tsConfigPath": "libs/prosopone/tsconfig.lib.json"
+      }
+    },
+    "tekmerion": {
+      "type": "library",
+      "root": "libs/tekmerion",
+      "entryFile": "index",
+      "sourceRoot": "libs/tekmerion/src",
+      "compilerOptions": {
+        "tsConfigPath": "libs/tekmerion/tsconfig.lib.json"
+      }
+    },
+    "telos": {
+      "type": "library",
+      "root": "libs/telos",
+      "entryFile": "index",
+      "sourceRoot": "libs/telos/src",
+      "compilerOptions": {
+        "tsConfigPath": "libs/telos/tsconfig.lib.json"
+      }
+    },
+    "topos": {
+      "type": "library",
+      "root": "libs/topos",
+      "entryFile": "index",
+      "sourceRoot": "libs/topos/src",
+      "compilerOptions": {
+        "tsConfigPath": "libs/topos/tsconfig.lib.json"
+      }
+    }
+  },
+  "entryFile": "src/main"
+}

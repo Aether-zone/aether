@@ -1,0 +1,35 @@
+{
+  "name": "@aether/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev -p ${PORT:-3042}",
+    "build": "next build",
+    "start": "next start -p ${PORT:-3042}",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aether-zone/daimon": "^0.1.0",
+    "@aether-zone/kosmos": "^0.3.0",
+    "@aether/contract": "workspace:*",
+    "next": "~16.3.1",
+    "oauth4webapi": "^3.8.7",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-icons": "^5.7.0",
+    "server-only": "^0.0.1",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "eslint": "^9.8.0",
+    "eslint-config-next": "^16.1.6",
+    "tailwindcss": "^4.3.3",
+    "typescript": "~6.0.3"
+  }
+}

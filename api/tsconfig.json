@@ -1,0 +1,53 @@
+{
+  "extends": "../tsconfig.base.json",
+  "files": [],
+  "include": [],
+  "references": [
+    {
+      "path": "./tsconfig.app.json"
+    },
+    {
+      "path": "./tsconfig.spec.json"
+    }
+  ],
+  "compilerOptions": {
+    "paths": {
+      "@aether/chronos": [
+        "./libs/chronos/src"
+      ],
+      "@aether/chronos/*": [
+        "./libs/chronos/src/*"
+      ],
+      "@aether/oikonomos": [
+        "./libs/oikonomos/src"
+      ],
+      "@aether/oikonomos/*": [
+        "./libs/oikonomos/src/*"
+      ],
+      "@aether/prosopone": [
+        "./libs/prosopone/src"
+      ],
+      "@aether/prosopone/*": [
+        "./libs/prosopone/src/*"
+      ],
+      "@aether/tekmerion": [
+        "./libs/tekmerion/src"
+      ],
+      "@aether/tekmerion/*": [
+        "./libs/tekmerion/src/*"
+      ],
+      "@aether/telos": [
+        "./libs/telos/src"
+      ],
+      "@aether/telos/*": [
+        "./libs/telos/src/*"
+      ],
+      "@aether/topos": [
+        "./libs/topos/src"
+      ],
+      "@aether/topos/*": [
+        "./libs/topos/src/*"
+      ]
+    }
+  }
+}
