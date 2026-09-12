@@ -1,5 +1,6 @@
 import {
   ACTOR_KEY,
+  ENV,
   EventPublisher,
   OrganizationGuard,
   type Actor,
@@ -30,8 +31,21 @@ import { TekmerionModule } from './tekmerion.module';
 @Module({
   providers: [
     { provide: EventPublisher, useValue: { publish: () => Promise.resolve() } },
+    /*
+     * `ENV` comes from organon's config module in the running app, and
+     * `TekmerionModule` now reads loculus's address out of it. The value is
+     * never reached here: nothing in these specs uploads, and a `LoculusClient`
+     * that is never called does not care what its base URL is.
+     */
+    {
+      provide: ENV,
+      useValue: {
+        LOCULUS_URL: 'http://loculus.test',
+        LOCULUS_TIMEOUT_MS: 1000,
+      },
+    },
   ],
-  exports: [EventPublisher],
+  exports: [EventPublisher, ENV],
 })
 class TestBrokerModule {}
 
@@ -282,5 +296,39 @@ describe('DELETE /organizations/:id/resources/:id', () => {
     );
 
     expect(status).toBe(404);
+  });
+});
+
+describe('files', () => {
+  it('answers 400 for a file id that could never have been one', async () => {
+    expect(
+      (await request(app.getHttpServer()).get(`${BASE}/files/42`)).status,
+    ).toBe(400);
+  });
+
+  it('answers 404 for a well-formed id nobody holds', async () => {
+    const { status } = await request(app.getHttpServer()).get(
+      `${BASE}/files/11111111-1111-4111-8111-111111111111`,
+    );
+
+    expect(status).toBe(404);
+  });
+
+  it('does not collide with the route that reads a resource by id', async () => {
+    /*
+     * `files/:fileId` and `:id` are both one segment after the base, and Nest
+     * matches in declaration order. If they were the other way round, "files"
+     * would be parsed as a resource id and every file request would answer 400
+     * from `ParseUUIDPipe` — a failure that reads as a bad id rather than as a
+     * routing mistake.
+     */
+    const { body: filed } = await post({ type: 'NOTE', title: 'A note' });
+
+    const { status, body } = await request(app.getHttpServer()).get(
+      `${BASE}/${filed.id}`,
+    );
+
+    expect(status).toBe(200);
+    expect(body.id).toBe(filed.id);
   });
 });

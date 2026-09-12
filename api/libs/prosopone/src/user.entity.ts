@@ -29,4 +29,11 @@ export class UserEntity {
 
   @Column()
   phoneNumber!: string;
+
+  @Column({ type: 'text', nullable: true })
+  note!: string | null;
+
+  /** The group they belong to, by id. */
+  @Column({ type: 'text', nullable: true })
+  groupId!: string | null;
 }

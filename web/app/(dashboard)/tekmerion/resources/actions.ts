@@ -1,12 +1,20 @@
 'use server';
 
-import { createResourceSchema, updateResourceSchema } from '@aether/contract';
+import {
+  createPresignedUploadSchema,
+  createResourceSchema,
+  updateResourceSchema,
+  type PreparedUploadDTO,
+} from '@aether/contract';
 import { revalidatePath } from 'next/cache';
 
 import type { ApiFailure } from '@/lib/api';
 import {
   createResource,
   deleteResource,
+  fileDownloadUrl,
+  markUploaded,
+  presignUpload,
   updateResource,
 } from '@/lib/resources';
 
@@ -143,4 +151,71 @@ export async function removeResourceAction(
   revalidateResource(id);
 
   return {};
+}
+
+/**
+ * Asks where a file may go.
+ *
+ * A server action rather than a call from the browser, because the access
+ * token lives on the server — the browser never holds one. What comes back is
+ * a URL the browser *can* use without a token, which is exactly what a
+ * presigned URL is for.
+ */
+export async function presignUploadAction(
+  request: unknown,
+): Promise<{ prepared?: PreparedUploadDTO; error?: string }> {
+  const parsed = createPresignedUploadSchema.safeParse(request);
+
+  if (!parsed.success) {
+    return { error: 'That file could not be described to the store.' };
+  }
+
+  const result = await presignUpload(parsed.data);
+
+  if (!result.ok) {
+    return {
+      error: toFormResult(result).error ?? 'The upload could not start.',
+    };
+  }
+
+  return { prepared: result.data };
+}
+
+/** Records that the bytes arrived, once the browser has finished the PUT. */
+export async function markUploadedAction(
+  fileId: string,
+): Promise<ResourceFormResult> {
+  const result = await markUploaded(fileId);
+
+  if (!result.ok) {
+    return toFormResult(result);
+  }
+
+  return {};
+}
+
+/**
+ * A link to the bytes, good for a few minutes.
+ *
+ * A server action because the access token lives on the server — the browser
+ * never holds one. What comes back is a URL the browser *can* follow without a
+ * token, which is what a presigned URL is for.
+ *
+ * Minted per click rather than per render: these expire, and a link created
+ * when the page loaded would break while somebody was still reading it.
+ */
+export async function downloadAction(
+  fileId: string,
+): Promise<{ url?: string; error?: string }> {
+  const result = await fileDownloadUrl(fileId);
+
+  if (!result.ok) {
+    return {
+      error:
+        toFormResult(result).error ??
+        'That file could not be fetched from the store.',
+    };
+  }
+
+  return { url: result.data.downloadUrl };
 }

@@ -40,6 +40,10 @@ export class TaskEntity {
   @Column({ type: 'text', nullable: true })
   projectId!: string | null;
 
+  /** The people this task is on. */
+  @Column({ type: 'simple-array' })
+  involves!: string[];
+
   @Column({ type: 'text', nullable: true })
   dueAt!: string | null;
 

@@ -1,5 +1,7 @@
 'use client';
 
+import Link from 'next/link';
+
 import {
   Alert,
   AlertDescription,
@@ -38,8 +40,7 @@ import { UserDialog } from './user-dialog';
 const EXPLANATIONS: Record<ApiFailure['reason'], string> = {
   noOrganization:
     'You do not belong to any organization yet, and people are kept per organization. Ask an owner to add you in pistis.',
-  unauthenticated:
-    'Your session is no longer valid. Sign out and back in.',
+  unauthenticated: 'Your session is no longer valid. Sign out and back in.',
   forbidden:
     'Your session does not grant access to this organization. Switching organization in the sidebar, or signing in again, usually fixes it.',
   notFound:
@@ -138,9 +139,12 @@ export function PeopleView({
                       size="sm"
                       fallback={initials(`${user.firstName} ${user.lastName}`)}
                     />
-                    <span className="font-medium text-foreground">
+                    <Link
+                      href={`/prosopone/people/${user.id}`}
+                      className="font-medium text-foreground hover:underline"
+                    >
                       {user.firstName} {user.lastName}
-                    </span>
+                    </Link>
                   </span>
                 </TableCell>
                 <TableCell className="text-muted-foreground">

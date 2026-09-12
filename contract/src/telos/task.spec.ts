@@ -10,6 +10,7 @@ const valid = {
   priority: 2,
   projectId: '22222222-2222-4222-8222-222222222222',
   dueAt: '2026-03-31T22:59:00.000Z',
+  involves: [],
   createdAt: '2025-12-01T09:00:00.000Z',
   updatedAt: '2025-12-01T09:00:00.000Z',
 };
@@ -90,8 +91,11 @@ describe('the states', () => {
 
 describe('writing one down', () => {
   it('needs only a title', () => {
+    // `involves` comes back defaulted: a task written down without naming
+    // anybody still gets a well-formed list.
     expect(createTaskSchema.parse({ title: 'Do the thing' })).toEqual({
       title: 'Do the thing',
+      involves: [],
     });
   });
 

@@ -1,5 +1,10 @@
 import { z } from 'zod';
 
+import {
+  relationsDefaultsSchema,
+  relationsSchema,
+  relationsUpdateSchema,
+} from './relation.js';
 import { resourceSourceSchema } from './resource-source.js';
 import { resourceTypeSchema } from './resource-type.js';
 
@@ -37,6 +42,22 @@ const EXTERNAL_ID_MAX = 500;
  */
 const metadataSchema = z.record(z.string(), z.unknown());
 
+const TAG_MAX = 50;
+
+/**
+ * One tag.
+ *
+ * Lowercased on the way in rather than compared case-insensitively later: the
+ * stored value is then the only spelling there is, and nothing downstream has
+ * to remember to fold case before grouping.
+ */
+const tagSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .min(1, 'A tag cannot be blank.')
+  .max(TAG_MAX);
+
 export const resourceSchema = z.object({
   id: z.uuid(),
 
@@ -65,9 +86,59 @@ export const resourceSchema = z.object({
    * from 1.
    */
   externalId: z.string().trim().min(1).max(EXTERNAL_ID_MAX).optional(),
+
+  /**
+   * The stored object this resource is, where it is one.
+   *
+   * A reference rather than the file's fields inlined, because the upload has
+   * a life of its own: the row exists before the bytes do, and its status
+   * changes without the resource changing. Absent for everything that is not a
+   * file, which is most of them.
+   */
+  fileId: z.uuid().optional(),
   url: z.url().max(URL_MAX).optional(),
 
   metadata: metadataSchema.optional(),
+
+  /**
+   * Free-text labels, lowercased.
+   *
+   * Distinct from `metadata`, which is whatever the source wanted to keep in
+   * no agreed vocabulary. A tag is the opposite: something a *person* chose so
+   * that this resource turns up beside others, which only works if two people
+   * writing the same word produce the same tag. Hence the lowercasing — "Graph"
+   * and "graph" are one label, and leaving them apart would quietly split a
+   * collection in half.
+   *
+   * Not an enum. The whole value of a tag is that nobody had to agree on it in
+   * advance; a closed list would be a second `ResourceType`.
+   *
+   * Always present, possibly empty.
+   */
+  tags: z.array(tagSchema),
+
+  /**
+   * The people this resource is about, by id — prosopone person ids.
+   *
+   * The same field an idea, a goal and a project carry, and owned here for the
+   * same reason: nobody else records it. A transcript is *about* whoever was
+   * in the room, and that is usually how somebody looks for it again.
+   */
+  involves: z.array(z.uuid()),
+
+  /**
+   * What this resource is about, related to, and mentions.
+   *
+   * Distinct from `involves`, which stays as it is: that one is people, by
+   * bare id, and is the field an idea, a goal and a project all carry. These
+   * three point at anything prosopone or telos names, and say *how* — see
+   * `relation.ts` for why three arrays rather than one with a predicate on it.
+   *
+   * Where they overlap, they overlap: a person can be in `involves` and in
+   * `about`, and the two are not the same claim. Collapsing them would lose
+   * the one that a machine is allowed to write.
+   */
+  ...relationsSchema.shape,
 
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
@@ -80,11 +151,18 @@ export const resourceSchema = z.object({
  * because a resource is usually filed by something automated that knows what
  * it has — unlike an idea, which is typed by a person in a hurry.
  */
-export const createResourceSchema = resourceSchema.omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true,
-});
+export const createResourceSchema = resourceSchema
+  .omit({
+    id: true,
+    createdAt: true,
+    updatedAt: true,
+  })
+  .extend({
+    // Defaulted, so a kind alone is still a whole resource.
+    tags: z.array(tagSchema).default([]),
+    involves: z.array(z.uuid()).default([]),
+    ...relationsDefaultsSchema.shape,
+  });
 
 /**
  * What a caller may send to change one.
@@ -109,6 +187,14 @@ export const updateResourceSchema = z.object({
     .optional(),
   url: z.url().max(URL_MAX).nullable().optional(),
   metadata: metadataSchema.nullable().optional(),
+  fileId: z.uuid().nullable().optional(),
+  /*
+   * The whole set, replaced. Sending `[]` removes every tag, which is why
+   * neither of these is nullable — the empty array already says it.
+   */
+  tags: z.array(tagSchema).optional(),
+  involves: z.array(z.uuid()).optional(),
+  ...relationsUpdateSchema.shape,
 });
 
 export type ResourceDTO = z.infer<typeof resourceSchema>;

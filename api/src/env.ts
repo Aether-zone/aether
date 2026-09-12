@@ -74,6 +74,25 @@ export const envSchema = baseEnvSchema.extend({
    * aether has data anyone would miss, this goes off and migrations go in.
    */
   DATABASE_SYNCHRONIZE: z.coerce.boolean().optional(),
+
+  /*
+   * loculus, the object store service.
+   *
+   * Reached server to server, so this is an internal address — unlike the
+   * store endpoint loculus signs into the URLs it hands out, which has to be
+   * one the browser can resolve. aether never sees a bucket credential: it
+   * asks loculus where a file may go and relays the caller's own token, so it
+   * can obtain nothing the person could not have obtained themselves.
+   */
+  LOCULUS_URL: z.url().default('http://localhost:3111'),
+  /**
+   * How long to wait for loculus, in milliseconds.
+   *
+   * Signing is arithmetic, so a slow answer means loculus or its store is
+   * unwell — and a request that hangs holds an aether connection open for a
+   * browser that has already stopped waiting.
+   */
+  LOCULUS_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
 });
 
 export type Env = z.infer<typeof envSchema>;

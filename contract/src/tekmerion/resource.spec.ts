@@ -15,6 +15,11 @@ const valid = {
   externalId: 'page-4471',
   url: 'https://12factor.net/',
   metadata: { fetchedBy: 'crawler-2', attempts: 1 },
+  tags: ['graph', 'modelling'],
+  involves: [],
+  about: [],
+  relatedTo: [],
+  mentions: [],
   createdAt: '2025-12-01T09:00:00.000Z',
   updatedAt: '2025-12-01T09:00:00.000Z',
 };
@@ -33,6 +38,11 @@ describe('a resource', () => {
     const bare = {
       id: valid.id,
       type: 'FILE',
+      tags: [],
+      involves: [],
+      about: [],
+      relatedTo: [],
+      mentions: [],
       createdAt: valid.createdAt,
       updatedAt: valid.updatedAt,
     };
@@ -192,9 +202,70 @@ describe('filing one', () => {
   });
 
   it('needs only a kind', () => {
+    // Every list field comes back defaulted, which is the point of defaulting
+    // them: a resource filed with nothing else still gets well-formed lists,
+    // and no consumer has to tell "none" from "not sent".
     expect(createResourceSchema.parse({ type: 'NOTE' })).toEqual({
       type: 'NOTE',
+      tags: [],
+      involves: [],
+      about: [],
+      relatedTo: [],
+      mentions: [],
     });
+  });
+});
+
+/*
+ * What a resource points at, and how. Three arrays rather than one with a
+ * predicate on it, because they become three different edges in the graph.
+ */
+describe('relations', () => {
+  const person = '11111111-1111-4111-8111-111111111111';
+
+  it('takes a kind and an id, not a bare id', () => {
+    // The target set is heterogeneous, and an id alone cannot say which IRI to
+    // mint from it — two domains both hand out uuids.
+    expect(
+      resourceSchema.safeParse({
+        ...valid,
+        about: [{ kind: 'PERSON', id: person }],
+      }).success,
+    ).toBe(true);
+
+    expect(
+      resourceSchema.safeParse({ ...valid, about: [person] }).success,
+    ).toBe(false);
+  });
+
+  it('refuses a kind no domain mints an IRI for', () => {
+    /*
+     * `ORGANIZATION` in particular: the word means the tenant in aether, and
+     * the thing usually meant by it is a `GROUP`. Accepting it would mint
+     * `urn:aether:organization:…` against a domain that does not exist.
+     */
+    expect(
+      resourceSchema.safeParse({
+        ...valid,
+        about: [{ kind: 'ORGANIZATION', id: person }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('refuses a target whose id is not a uuid', () => {
+    // A caller free to write an id is a caller free to write `../../x` into
+    // the IRI that gets minted from it.
+    expect(
+      resourceSchema.safeParse({
+        ...valid,
+        mentions: [{ kind: 'PERSON', id: 'not-a-uuid' }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('lets a change empty a set, and has no null to do it with', () => {
+    expect(updateResourceSchema.parse({ about: [] })).toEqual({ about: [] });
+    expect(updateResourceSchema.safeParse({ about: null }).success).toBe(false);
   });
 });
 
@@ -232,5 +303,73 @@ describe('changing one', () => {
     expect(updateResourceSchema.safeParse({ title: '   ' }).success).toBe(
       false,
     );
+  });
+});
+
+describe('tags', () => {
+  it('lowercases them, so one word is one label', () => {
+    /*
+     * The whole value of a tag is that things gather under it. "Graph" and
+     * "graph" left apart would split a collection in half, and nobody would
+     * see that happen — they would just find less than they expected.
+     */
+    expect(
+      resourceSchema.parse({ ...valid, tags: ['Graph', 'MODELLING'] }).tags,
+    ).toEqual(['graph', 'modelling']);
+  });
+
+  it('trims them', () => {
+    expect(resourceSchema.parse({ ...valid, tags: ['  spec  '] }).tags).toEqual(
+      ['spec'],
+    );
+  });
+
+  it('refuses a blank one', () => {
+    // A tag nobody can type is a tag nobody can search for.
+    expect(resourceSchema.safeParse({ ...valid, tags: ['   '] }).success).toBe(
+      false,
+    );
+  });
+
+  it('takes anything else, because nobody agreed on them in advance', () => {
+    expect(
+      resourceSchema.safeParse({ ...valid, tags: ['a-word-nobody-has-used'] })
+        .success,
+    ).toBe(true);
+  });
+
+  it('is required on the record, so "untagged" and "unsaid" stay distinct', () => {
+    const { tags: _omitted, ...without } = valid;
+
+    expect(resourceSchema.safeParse(without).success).toBe(false);
+  });
+
+  it('is replaced as a whole set on update', () => {
+    expect(updateResourceSchema.parse({ tags: ['one'] }).tags).toEqual(['one']);
+    expect(updateResourceSchema.parse({ tags: [] }).tags).toEqual([]);
+  });
+});
+
+describe('who a resource is about', () => {
+  const ALICE = '55555555-5555-4555-8555-555555555555';
+
+  it('records them, the same way an idea does', () => {
+    // A transcript is about whoever was in the room, and that is usually how
+    // somebody looks for it again.
+    expect(
+      resourceSchema.parse({ ...valid, involves: [ALICE] }).involves,
+    ).toEqual([ALICE]);
+  });
+
+  it('can be set when the resource is filed', () => {
+    expect(
+      createResourceSchema.parse({ type: 'VIDEO', involves: [ALICE] }).involves,
+    ).toEqual([ALICE]);
+  });
+
+  it('refuses anything that is not a person id', () => {
+    expect(
+      resourceSchema.safeParse({ ...valid, involves: ['Alice'] }).success,
+    ).toBe(false);
   });
 });

@@ -36,9 +36,6 @@ export class GoalEntity {
   @Column({ type: 'integer', nullable: true })
   priority!: number | null;
 
-  @Column({ type: 'integer' })
-  progress!: number;
-
   @Column({ type: 'simple-array' })
   inspiredBy!: string[];
 
@@ -52,9 +49,10 @@ export class GoalEntity {
   scheduled!: string[];
 
   /*
-   * No column for `realizedBy`. It is derived from the projects naming this
-   * goal, and a column would be a second copy free to disagree with them —
-   * which is the whole reason the link lives on the project.
+   * No column for `realizedBy` or `progress`. Both are derived from the
+   * projects naming this goal — the first from their existence, the second
+   * from the tasks inside them — and a column would be a second copy free to
+   * disagree with the work it was counted from.
    */
 
   @Column({ type: 'text' })

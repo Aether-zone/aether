@@ -10,6 +10,7 @@ import { z } from 'zod';
 
 /** Longest a name may be. Generous — names are not a place to be clever. */
 const NAME_MAX = 100;
+const NOTE_MAX = 10000;
 
 export const userSchema = z.object({
   /**
@@ -19,7 +20,11 @@ export const userSchema = z.object({
    */
   id: z.uuid(),
 
-  firstName: z.string().trim().min(1, 'A first name is required.').max(NAME_MAX),
+  firstName: z
+    .string()
+    .trim()
+    .min(1, 'A first name is required.')
+    .max(NAME_MAX),
   lastName: z.string().trim().min(1, 'A last name is required.').max(NAME_MAX),
 
   /**
@@ -40,6 +45,26 @@ export const userSchema = z.object({
    * nobody can dial.
    */
   phoneNumber: z.e164('Use the international format, like +31612345678.'),
+
+  /**
+   * Whatever is worth remembering about them, in free text.
+   *
+   * Deliberately unstructured. What a person needs to recall about somebody —
+   * how they like to be contacted, what they are working through, who
+   * introduced them — is not a set of fields anybody can enumerate in advance,
+   * and a form that tried would collect less than a sentence does.
+   */
+  note: z.string().trim().max(NOTE_MAX).optional(),
+
+  /**
+   * The group they belong to, by id — a prosopone group.
+   *
+   * One, not many, and that is a simplification worth naming: people belong to
+   * several groups in life, and this records the one that explains why they
+   * are in your console. When that stops being enough the field becomes a
+   * list, which is a widening rather than a rewrite.
+   */
+  groupId: z.uuid().optional(),
 });
 
 /**
@@ -54,7 +79,16 @@ export const createUserSchema = userSchema.omit({ id: true });
  * having to read the record back and return it whole — and an absent field
  * means "leave it alone" rather than "clear it".
  */
-export const updateUserSchema = createUserSchema.partial();
+export const updateUserSchema = createUserSchema.partial().extend({
+  /*
+   * Nullable, unlike the rest. A missing key already means "leave it alone",
+   * so an optional-only field can be added and never taken back — and both of
+   * these are things somebody will want to remove: a note that stopped being
+   * true, a group somebody left.
+   */
+  note: z.string().trim().max(NOTE_MAX).nullable().optional(),
+  groupId: z.uuid().nullable().optional(),
+});
 
 export type UserDTO = z.infer<typeof userSchema>;
 export type CreateUserDTO = z.infer<typeof createUserSchema>;

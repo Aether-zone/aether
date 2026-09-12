@@ -87,19 +87,19 @@ export const goalSchema = z
     /**
      * How far along, 0 to 100.
      *
-     * **Stated, not derived, and that is a compromise.** The honest source is
-     * the work underneath — the projects pursuing this goal and the tasks in
-     * them — but nothing records which project pursues which goal yet, so
-     * there is nothing to count. A number somebody types is the only thing
-     * available, and it is worth having because a goal board with no sense of
-     * movement is a list of intentions.
+     * **Derived, not stated.** It is counted from the work underneath: the
+     * tasks in the projects pursuing this goal, the same tasks a project
+     * counts for itself. This field used to be a number somebody typed,
+     * because nothing recorded which project pursued which goal — now
+     * `Project.pursues` does, and a typed number would be a second answer free
+     * to disagree with the work.
      *
-     * It will go stale, and that is the cost. When the goal→project link
-     * exists this should become derived and this field should go, rather than
-     * both existing and disagreeing.
+     * A goal with no projects, or whose projects have no tasks, is `0`. That
+     * reads the same as a goal nobody has started, which is right: in both
+     * cases nothing has been finished.
      *
-     * An integer: a percentage with decimals implies a precision that a number
-     * somebody estimated does not have.
+     * An integer, because a percentage with decimals implies a precision that
+     * counting whole tasks does not have.
      */
     progress: z.number().int().min(0).max(100),
 
@@ -171,8 +171,9 @@ export const createGoalSchema = z
     involves: z.array(z.uuid()).default([]),
     sources: z.array(z.uuid()).default([]),
     scheduled: z.array(z.uuid()).default([]),
-    // `realizedBy` is absent on purpose: it is derived from the projects that
-    // name this goal, so there is nothing to send and nothing to send wrongly.
+    // `realizedBy` and `progress` are absent on purpose: both are derived
+    // from the projects that name this goal, so there is nothing to send and
+    // nothing that could be sent wrongly.
     /** Defaulted, so a goal that came from nowhere need not send `[]`. */
     inspiredBy: z.array(z.uuid()).default([]),
   })
@@ -197,7 +198,6 @@ export const updateGoalSchema = z.object({
   startsAt: z.iso.datetime().nullable().optional(),
   targetAt: z.iso.datetime().nullable().optional(),
   priority: prioritySchema.nullable().optional(),
-  progress: z.number().int().min(0).max(100).optional(),
   involves: z.array(z.uuid()).optional(),
   /** The whole set, when sent: an idea missing from it is unlinked. */
   inspiredBy: z.array(z.uuid()).optional(),

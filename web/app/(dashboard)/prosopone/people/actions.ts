@@ -106,9 +106,7 @@ function validate<S extends ZodType>(
   return { fieldErrors };
 }
 
-export async function addUserAction(
-  input: unknown,
-): Promise<UserFormResult> {
+export async function addUserAction(input: unknown): Promise<UserFormResult> {
   const { data, fieldErrors } = validate(createUserSchema, input);
 
   if (!data) {
@@ -142,7 +140,14 @@ export async function editUserAction(
     return toFormResult(result);
   }
 
+  /*
+   * Both the list and the one. A change made on the detail page has to reach
+   * the list behind it, and a change made on the list has to reach a detail
+   * page cached from earlier — otherwise going back shows what was true before
+   * the edit, which reads as the edit having failed.
+   */
   revalidatePath(PEOPLE);
+  revalidatePath(`${PEOPLE}/${id}`);
 
   return {};
 }

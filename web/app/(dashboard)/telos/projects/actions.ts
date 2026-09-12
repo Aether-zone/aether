@@ -9,6 +9,22 @@ import { toIsoInstant } from '@/lib/when';
 
 const PROJECTS = '/telos/projects';
 
+/**
+ * The project list, and every goal page.
+ *
+ * A goal's `realizedBy` and its progress are both read from the projects
+ * naming it, so any project write changes what some goal's page says without
+ * anything having been written to the goal.
+ *
+ * The whole goals layout rather than the ids in hand: changing a project's
+ * `pursues` or deleting it moves progress on the goal it *left*, and that id
+ * is not knowable from the change.
+ */
+function revalidateProjects(): void {
+  revalidatePath(PROJECTS);
+  revalidatePath('/telos/goals', 'layout');
+}
+
 export type ProjectFormResult = {
   error?: string;
   fieldErrors?: Record<string, string>;
@@ -105,20 +121,7 @@ export async function addProjectAction(input: {
     return toFormResult(result);
   }
 
-  revalidatePath(PROJECTS);
-
-  /*
-   * A goal's `realizedBy` is derived from the projects naming it, so starting
-   * a project from a goal changes what that goal's page says without anything
-   * having written to the goal. Nothing else would know to refresh it.
-   */
-  for (const goalId of input.pursues ?? []) {
-    revalidatePath(`/telos/goals/${goalId}`);
-  }
-
-  if (input.pursues?.length) {
-    revalidatePath('/telos/goals');
-  }
+  revalidateProjects();
 
   return {};
 }
@@ -140,7 +143,7 @@ export async function changeProjectAction(
     return toFormResult(result);
   }
 
-  revalidatePath(PROJECTS);
+  revalidateProjects();
 
   return {};
 }
@@ -154,7 +157,7 @@ export async function removeProjectAction(
     return toFormResult(result);
   }
 
-  revalidatePath(PROJECTS);
+  revalidateProjects();
 
   return {};
 }

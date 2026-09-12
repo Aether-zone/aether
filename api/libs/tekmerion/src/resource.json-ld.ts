@@ -1,4 +1,9 @@
-import type { ResourceDTO, ResourceType } from '@aether/contract';
+import type {
+  RelationTargetDTO,
+  RelationTargetKind,
+  ResourceDTO,
+  ResourceType,
+} from '@aether/contract';
 import type { JsonLdDocument } from '@aether-zone/organon';
 
 /**
@@ -30,6 +35,21 @@ export const RESOURCE_CONTEXT = {
   sourceId: 'aether:sourceId',
   sourceName: 'aether:sourceName',
   externalId: 'aether:externalId',
+  tags: 'aether:tag',
+  involves: 'aether:involves',
+  /*
+   * The relation predicates.
+   *
+   * `relatedTo` maps to `aether:related_to` rather than `aether:relatedTo`
+   * because arachni names an edge from the predicate's local name: it strips
+   * everything but letters, digits and underscore and upper-cases the rest, so
+   * the camelCase spelling would arrive as `RELATEDTO`. The underscore is what
+   * makes the edge read `RELATED_TO` in Cypher. The field itself stays
+   * camelCase, like every other field in this contract.
+   */
+  about: 'aether:about',
+  relatedTo: 'aether:related_to',
+  mentions: 'aether:mentions',
 } as const;
 
 /**
@@ -63,6 +83,12 @@ export interface ResourceJsonLD extends JsonLdDocument {
   sourceId?: string;
   sourceName?: string;
   externalId?: string;
+  tags?: string[];
+  involves?: { '@id': string }[];
+
+  about?: { '@id': string }[];
+  relatedTo?: { '@id': string }[];
+  mentions?: { '@id': string }[];
 }
 
 /**
@@ -74,6 +100,57 @@ export interface ResourceJsonLD extends JsonLdDocument {
  * artefact came from and may well answer.
  */
 export const resourceIri = (id: string): string => `urn:aether:resource:${id}`;
+
+/**
+ * The IRI prosopone knows a person by.
+ *
+ * Restated rather than imported from `@aether/prosopone`, which would make
+ * tekmerion depend on another domain for one string. The rule is the shared
+ * one every service mints people under, so the two agreeing is the point.
+ */
+const personIri = (id: string): string => `urn:aether:person:${id}`;
+
+/**
+ * The IRI each kind of relation target is known by.
+ *
+ * Restated here for the same reason as `personIri` above, and every one of
+ * them matches the function that domain already mints with — prosopone's
+ * `groupIri`, telos's `ideaIri`, `goalIri`, `projectIri` and `taskIri`. That
+ * agreement is the entire value of the feature: a reference has to land on the
+ * node telos already published, and a scheme invented here would produce a
+ * second node beside it, related to nothing. akouo's `meeting.json-ld.ts`
+ * carries the note on having made that mistake with people and undone it.
+ *
+ * A total record rather than a switch with a default, so adding a kind to
+ * `RELATION_TARGET_KINDS` fails to compile here until it has an IRI.
+ */
+const TARGET_IRI: Record<RelationTargetKind, (id: string) => string> = {
+  PERSON: personIri,
+  GROUP: (id) => `urn:aether:group:${id}`,
+  PROJECT: (id) => `urn:aether:project:${id}`,
+  GOAL: (id) => `urn:aether:goal:${id}`,
+  TASK: (id) => `urn:aether:task:${id}`,
+  IDEA: (id) => `urn:aether:idea:${id}`,
+};
+
+/**
+ * A relation array as JSON-LD references.
+ *
+ * **Bare `{'@id': …}` and nothing else, deliberately.** arachni reads an
+ * object with more than an `@id` as a resource *defined inside* this document,
+ * marks it `PART_OF`, and deletes it when the resource is deleted. A person a
+ * document merely mentions must outlive the document mentioning them.
+ *
+ * The nodes need not exist yet: arachni merges on the IRI, so a reference
+ * stands up a placeholder that prosopone or telos fills in when it announces
+ * the thing — or never, in which case the edge still records truthfully what
+ * this resource points at.
+ */
+const targetRefs = (targets: RelationTargetDTO[]) =>
+  targets.map((target) => ref(TARGET_IRI[target.kind](target.id)));
+
+/** A pointer at a resource described elsewhere. */
+const ref = (iri: string) => ({ '@id': iri });
 
 /**
  * A resource as a JSON-LD document.
@@ -115,5 +192,27 @@ export function toResourceDocument(resource: ResourceDTO): ResourceJsonLD {
         }
       : {}),
     ...(resource.externalId ? { externalId: resource.externalId } : {}),
+    /*
+     * Tags are literals, not references. A tag is a word somebody chose, not a
+     * resource in its own right — minting `urn:aether:tag:graph` would invent
+     * an identity nothing else can confirm, and arachni would fill the graph
+     * with nodes that exist only because they were mentioned.
+     */
+    ...(resource.tags.length > 0 ? { tags: resource.tags } : {}),
+    ...(resource.involves.length > 0
+      ? { involves: resource.involves.map((id) => ref(personIri(id))) }
+      : {}),
+    /*
+     * Omitted when empty rather than sent as `[]`, matching every other
+     * optional field here: absent means "nothing stated", and an empty array
+     * would have arachni write a property it then has to ignore.
+     */
+    ...(resource.about.length > 0 ? { about: targetRefs(resource.about) } : {}),
+    ...(resource.relatedTo.length > 0
+      ? { relatedTo: targetRefs(resource.relatedTo) }
+      : {}),
+    ...(resource.mentions.length > 0
+      ? { mentions: targetRefs(resource.mentions) }
+      : {}),
   };
 }

@@ -36,6 +36,19 @@ export const taskSchema = z.object({
   /** The project this is part of. Absent for a task that stands alone. */
   projectId: z.uuid().optional(),
 
+  /**
+   * The people this task is on, by id — prosopone person ids.
+   *
+   * The last of telos's four to get this, which was an oversight rather than a
+   * decision: an idea, a goal and a project could all name the people they
+   * concerned, and the one thing anybody is actually *assigned* could not.
+   *
+   * A list rather than a single assignee. Work shared between two people is
+   * the ordinary case, and a single id forces whoever noticed to pick one and
+   * lose the other.
+   */
+  involves: z.array(z.uuid()),
+
   /** When it is meant to be done by. Absent for one with no deadline. */
   dueAt: z.iso.datetime().optional(),
 
@@ -67,6 +80,7 @@ export const createTaskSchema = z.object({
   priority: prioritySchema.optional(),
   projectId: z.uuid().optional(),
   dueAt: z.iso.datetime().optional(),
+  involves: z.array(z.uuid()).default([]),
 });
 
 /**
@@ -85,6 +99,8 @@ export const updateTaskSchema = z.object({
   priority: prioritySchema.nullable().optional(),
   projectId: z.uuid().nullable().optional(),
   dueAt: z.iso.datetime().nullable().optional(),
+  /* The whole set, replaced. `[]` takes it off everyone. */
+  involves: z.array(z.uuid()).optional(),
 });
 
 export type TaskDTO = z.infer<typeof taskSchema>;

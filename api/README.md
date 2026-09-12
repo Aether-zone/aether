@@ -108,6 +108,38 @@ opens SQLite in memory from the entities themselves. A stub would agree with
 whatever its author assumed, and these services depend on what the store
 actually does with a `null`, a `simple-array` and a unique index.
 
+## Files
+
+The bytes live in **loculus**, the workspace's object store service. aether
+holds no bucket credentials and signs nothing: the browser asks aether where a
+file may go, aether asks loculus, and the browser uploads to the store
+directly. Nothing but JSON crosses this api — an api that streams uploads is an
+api sized by its largest file.
+
+`LoculusClient` **always relays the caller's token**, which is where aether's
+client is simpler than akouo's. akouo transcribes in the background and so has
+work with nobody to borrow a token from, needing client credentials of its own;
+nothing in tekmerion happens without somebody waiting for it. There is no
+service identity here to configure, leak or rotate — and aether can obtain
+nothing from loculus that the person could not have obtained themselves.
+
+`StoredFile.status` exists because the three steps can fail apart:
+
+| | |
+| --- | --- |
+| `INITIAL` | aether issued a URL and wrote a row; the bytes are not there yet |
+| `UPLOADING` | reserved for a client that reports progress; nothing sets it today |
+| `UPLOADED` | the browser said the PUT succeeded |
+
+A presigned URL can be issued and never spent, and without a state for that the
+choices are a row claiming bytes it does not have or no row at all until the
+browser comes back — which it may never do.
+
+**aether takes the browser's word that the upload finished.** A `HeadObject`
+through loculus would be the honest check, and it is one round trip; it is
+worth adding the day a file that claims to exist and does not becomes a problem
+somebody has.
+
 ## What is wired
 
 The part every service in the workspace shares, taken from

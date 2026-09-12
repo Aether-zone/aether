@@ -27,6 +27,7 @@ import {
 
 import { GoalService, type GoalRecord } from './goal.service';
 import { ProjectService } from './project.service';
+import { TaskService } from './task.service';
 
 /**
  * The goals telos is holding.
@@ -44,23 +45,43 @@ export class GoalController {
   constructor(
     private readonly goals: GoalService,
     private readonly projects: ProjectService,
+    private readonly tasks: TaskService,
   ) {}
 
   /**
-   * Fills in `realizedBy` — the projects working towards this goal.
+   * Fills in what is read from the projects working towards this goal:
+   * `realizedBy`, which is those projects, and `progress`, which is counted
+   * from the tasks inside them.
    *
    * Composed here rather than in `GoalService` because only `ProjectService`
-   * knows the answer, and having the two services ask each other would make
-   * them mutually dependent for one derived field. The controller is the one
-   * place that already knows about both.
+   * and `TaskService` know the answers, and having the services ask each other
+   * would make them mutually dependent for two derived fields. The controller
+   * is the one place that already knows about all three.
    */
-  private async withRealizedBy(
-    actor: Actor,
-    goal: GoalRecord,
-  ): Promise<GoalDTO> {
+  private async withWorkDone(actor: Actor, goal: GoalRecord): Promise<GoalDTO> {
+    const realizedBy = await this.projects.idsPursuing(actor, goal.id);
+
+    /*
+     * The tasks of every project pursuing this goal, added together — not an
+     * average of each project's percentage. A project holding one task and one
+     * holding fifty are not half the answer each, and averaging would let a
+     * finished afterthought drag a barely-started rewrite up to 50%.
+     */
+    const counts = await Promise.all(
+      realizedBy.map((projectId) =>
+        this.tasks.countsForProject(actor, projectId),
+      ),
+    );
+
+    const done = counts.reduce((sum, count) => sum + count.done, 0);
+    const total = counts.reduce((sum, count) => sum + count.total, 0);
+
     return {
       ...goal,
-      realizedBy: await this.projects.idsPursuing(actor, goal.id),
+      realizedBy,
+      // No tasks anywhere under it is 0, which reads the same as a goal nobody
+      // has started — right in both cases, since nothing has been finished.
+      progress: total === 0 ? 0 : Math.round((done / total) * 100),
     };
   }
 
@@ -70,7 +91,7 @@ export class GoalController {
     // awaiting them in turn would make a list N round trips deep.
     return Promise.all(
       (await this.goals.list(actor)).map((goal) =>
-        this.withRealizedBy(actor, goal),
+        this.withWorkDone(actor, goal),
       ),
     );
   }
@@ -85,7 +106,7 @@ export class GoalController {
     @CurrentActor() actor: Actor,
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<GoalDTO> {
-    return this.withRealizedBy(actor, await this.goals.get(actor, id));
+    return this.withWorkDone(actor, await this.goals.get(actor, id));
   }
 
   @Post()
@@ -95,7 +116,7 @@ export class GoalController {
   ): Promise<GoalDTO> {
     // Newly set, so nothing can be working towards it yet — composed the same
     // way rather than hard-coded to `[]`, so there is one path and not two.
-    return this.withRealizedBy(actor, await this.goals.create(actor, goal));
+    return this.withWorkDone(actor, await this.goals.create(actor, goal));
   }
 
   /**
@@ -109,7 +130,7 @@ export class GoalController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body(new ZodValidationPipe(updateGoalSchema)) changes: UpdateGoalDTO,
   ): Promise<GoalDTO> {
-    return this.withRealizedBy(
+    return this.withWorkDone(
       actor,
       await this.goals.update(actor, id, changes),
     );

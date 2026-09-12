@@ -9,17 +9,22 @@ import { createTask, deleteTask, updateTask } from '@/lib/tasks';
 const TASKS = '/telos/tasks';
 
 /**
- * The task list, and every project page.
+ * The task list, and every project and goal page.
  *
- * A project's progress is counted from its tasks, so finishing one changes
- * what its project says without anything having been written to the project.
- * `'layout'` reaches `/telos/projects/[id]` for every id, which is what makes
- * this correct when a task is *moved* between projects — the page it left is
- * as stale as the one it joined, and only the id it joined is knowable here.
+ * A project's progress is counted from its tasks, and a goal's is counted from
+ * the tasks in the projects pursuing it — so finishing one task changes what
+ * two other kinds of page say, without anything having been written to either.
+ *
+ * `'layout'` reaches `/telos/projects/[id]` and `/telos/goals/[id]` for every
+ * id. That breadth is what makes this correct rather than merely thorough:
+ * when a task is *moved* between projects the page it left is as stale as the
+ * one it joined, and only the id it joined is knowable here. The goal is not
+ * knowable at all from a task — it is two links away.
  */
 function revalidateTasks(): void {
   revalidatePath(TASKS);
   revalidatePath('/telos/projects', 'layout');
+  revalidatePath('/telos/goals', 'layout');
 }
 
 export type TaskFormResult = {

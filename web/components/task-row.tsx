@@ -1,6 +1,7 @@
 'use client';
 
 import { CLOSED_STATUSES, type TaskDTO } from '@aether/contract';
+import Link from 'next/link';
 import { useTransition } from 'react';
 
 import { DOTS, PILLS, STATUSES } from '@/app/(dashboard)/telos/tasks/statuses';
@@ -81,14 +82,15 @@ export function TaskRow({
         className="size-4 shrink-0 rounded border-border accent-current"
       />
 
-      <span
+      <Link
+        href={`/telos/tasks/${task.id}`}
         className={[
-          'min-w-0 flex-1 truncate text-sm',
+          'min-w-0 flex-1 truncate text-sm hover:underline',
           closed ? 'text-muted-foreground line-through' : 'text-foreground',
         ].join(' ')}
       >
         {task.title}
-      </span>
+      </Link>
 
       {project && (
         <span className="hidden shrink-0 truncate text-sm text-muted-foreground sm:block sm:max-w-48">

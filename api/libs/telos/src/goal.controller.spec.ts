@@ -170,3 +170,153 @@ describe('what is being done about a goal', () => {
     expect(body.realizedBy).toEqual([]);
   });
 });
+
+describe('how far along a goal is', () => {
+  const TASKS = `/organizations/${ORGANIZATION}/tasks`;
+
+  const addTask = (projectId: string, title: string) =>
+    request(app.getHttpServer())
+      .post(TASKS)
+      .send({ title, projectId })
+      .then((response) => response.body);
+
+  const finish = (id: string) =>
+    request(app.getHttpServer())
+      .patch(`${TASKS}/${id}`)
+      .send({ status: 'DONE' });
+
+  const read = (id: string) =>
+    request(app.getHttpServer())
+      .get(`${BASE}/${id}`)
+      .then((response) => response.body);
+
+  it('is nothing for a goal nobody is working on', async () => {
+    const { body: goal } = await post({ title: 'Ship it' });
+
+    expect(goal.progress).toBe(0);
+  });
+
+  it('is nothing for a goal whose project has no tasks', async () => {
+    // A project can be planned before it is broken down, and nothing has been
+    // finished — which reads the same as not having started.
+    const { body: goal } = await post({ title: 'Ship it' });
+    await startProject({ title: 'Rebuild it', pursues: [goal.id] });
+
+    expect((await read(goal.id)).progress).toBe(0);
+  });
+
+  it('counts the tasks in the project pursuing it', async () => {
+    const { body: goal } = await post({ title: 'Ship it' });
+    const { body: project } = await startProject({
+      title: 'Rebuild it',
+      pursues: [goal.id],
+    });
+
+    const one = await addTask(project.id, 'One');
+    await addTask(project.id, 'Two');
+    await addTask(project.id, 'Three');
+    await addTask(project.id, 'Four');
+
+    await finish(one.id);
+
+    expect((await read(goal.id)).progress).toBe(25);
+  });
+
+  it('adds the projects together rather than averaging them', async () => {
+    /*
+     * The reason this is a sum and not a mean. One project of one finished
+     * task and one of three untouched ones is 25% of the work, not 50% — an
+     * average would let a finished afterthought drag a barely-started rewrite
+     * halfway up the bar.
+     */
+    const { body: goal } = await post({ title: 'Ship it' });
+    const { body: small } = await startProject({
+      title: 'Afterthought',
+      pursues: [goal.id],
+    });
+    const { body: large } = await startProject({
+      title: 'Rewrite',
+      pursues: [goal.id],
+    });
+
+    const only = await addTask(small.id, 'Only task');
+    await finish(only.id);
+
+    await addTask(large.id, 'One');
+    await addTask(large.id, 'Two');
+    await addTask(large.id, 'Three');
+
+    expect((await read(goal.id)).progress).toBe(25);
+  });
+
+  it('ignores tasks in a project that does not pursue it', async () => {
+    const { body: goal } = await post({ title: 'Ship it' });
+    const { body: unrelated } = await startProject({ title: 'Something else' });
+
+    const task = await addTask(unrelated.id, 'One');
+    await finish(task.id);
+
+    expect((await read(goal.id)).progress).toBe(0);
+  });
+
+  it('moves when a task is finished, with nothing written to the goal', async () => {
+    // The whole point of counting it. Were `progress` a column, this would
+    // need the goal updating too — and the day it was forgotten, the bar would
+    // disagree with the work.
+    const { body: goal } = await post({ title: 'Ship it' });
+    const { body: project } = await startProject({
+      title: 'Rebuild it',
+      pursues: [goal.id],
+    });
+
+    const one = await addTask(project.id, 'One');
+    await addTask(project.id, 'Two');
+
+    expect((await read(goal.id)).progress).toBe(0);
+
+    await finish(one.id);
+
+    expect((await read(goal.id)).progress).toBe(50);
+  });
+
+  it('leaves a cancelled task out, so dropping scope does not stall it', async () => {
+    const { body: goal } = await post({ title: 'Ship it' });
+    const { body: project } = await startProject({
+      title: 'Rebuild it',
+      pursues: [goal.id],
+    });
+
+    const keep = await addTask(project.id, 'Still needed');
+    const drop = await addTask(project.id, 'Not needed');
+
+    await finish(keep.id);
+    await request(app.getHttpServer())
+      .patch(`${TASKS}/${drop.id}`)
+      .send({ status: 'CANCELLED' });
+
+    expect((await read(goal.id)).progress).toBe(100);
+  });
+
+  it('rounds, because a percentage of whole tasks is not exact', async () => {
+    const { body: goal } = await post({ title: 'Ship it' });
+    const { body: project } = await startProject({
+      title: 'Rebuild it',
+      pursues: [goal.id],
+    });
+
+    const one = await addTask(project.id, 'One');
+    await addTask(project.id, 'Two');
+    await addTask(project.id, 'Three');
+
+    await finish(one.id);
+
+    // 1/3 is 33.33…; a bar cannot show the rest of it.
+    expect((await read(goal.id)).progress).toBe(33);
+  });
+
+  it('cannot be set by the caller', async () => {
+    const { body } = await post({ title: 'Ship it', progress: 80 });
+
+    expect(body.progress).toBe(0);
+  });
+});

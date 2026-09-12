@@ -5,11 +5,16 @@
  * person, because it carries facts belonging to neither end of it — when it
  * started, what kind it is.
  *
- * A list of names rather than entities: the console's screens for these are
- * placeholders that call no api, so the one thing actually settled is *which
- * resources this domain owns*. Writing down a schema before there is a screen
- * that needs it would be inventing the domain rather than recording it.
+ * `Group` is a company, a community, a family — a set of people somebody
+ * wrote down. It is called a group and not an organization because that word
+ * is taken: `organizationId` means the tenant on every row in aether, and one
+ * tenant holds many groups.
+ *
+ * `Relationship` has no schema yet; it is on this list because "which
+ * resources are prosopone's" is a different question from "which of them are
+ * built", and it is the one an event consumer or a permissions check needs
+ * answered.
  */
-export const PROSOPONE_RESOURCES = ['Person', 'Relationship'] as const;
+export const PROSOPONE_RESOURCES = ['Person', 'Group', 'Relationship'] as const;
 
 export type ProsoponeResource = (typeof PROSOPONE_RESOURCES)[number];

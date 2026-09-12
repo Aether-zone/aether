@@ -3,6 +3,7 @@ import { Alert, AlertDescription, Heading, Text } from '@aether-zone/kosmos';
 import type { ApiFailure } from '@/lib/api';
 import { byNewest } from '@/lib/resource-order';
 import { listResources } from '@/lib/resources';
+import { listUsers } from '@/lib/users';
 
 import { ResourcesView } from './resources-view';
 
@@ -34,7 +35,10 @@ const EXPLANATIONS: Record<ApiFailure['reason'], string> = {
  * is the thing nobody has dealt with yet.
  */
 export default async function ResourcesPage() {
-  const result = await listResources();
+  // Both at once: a resource names the people it is about, and both the cards
+  // and the search need their names.
+  const [result, people] = await Promise.all([listResources(), listUsers()]);
+
   const resources = result.ok ? [...result.data].sort(byNewest) : [];
   const failure = result.ok ? null : result.reason;
 
@@ -47,9 +51,8 @@ export default async function ResourcesPage() {
           Tekmerion &gt; Resources
         </Heading>
         <Text tone="muted" size="body-small">
-          Evidence: the things a claim rests on. A resource here is the artefact
-          itself — what it means is arachni&rsquo;s business and what it says is
-          mneme&rsquo;s.
+          The source material behind your thinking — searchable by meaning, not
+          just filename.
         </Text>
       </div>
 
@@ -64,7 +67,10 @@ export default async function ResourcesPage() {
       {/* The view is rendered even on failure: filing still works the moment
           the api comes back, and hiding the whole screen behind an error would
           make a transient outage look like a lost feature. */}
-      <ResourcesView resources={resources} />
+      <ResourcesView
+        resources={resources}
+        people={people.ok ? people.data : []}
+      />
     </div>
   );
 }
